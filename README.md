@@ -37,6 +37,14 @@ python3 tests/eval_classifier.py
 
 Scores against `tests/ground_truth.json` (13 labeled scenarios). Currently 13/13 correct.
 
+## Operational artifacts
+
+Three documents in `docs/` make the monitoring system usable in practice:
+
+- **Escalation Runbook** — response procedures for all 8 failure categories
+- **SLA Document** — P1–P4 response tiers with time commitments
+- **Incident Postmortem** — filled-in postmortem for the S01 GPU hardware failure scenario
+
 ## Structure
 
 ```
