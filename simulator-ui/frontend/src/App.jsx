@@ -7,6 +7,7 @@ import GrafanaEmbed from "./components/GrafanaEmbed.jsx";
 import DecisionPanel from "./components/DecisionPanel.jsx";
 import Debrief from "./components/Debrief.jsx";
 import ScoreBoard from "./components/ScoreBoard.jsx";
+import ConceptCard from "./components/ConceptCard.jsx";
 
 const S = {
   app: { minHeight: "100vh", background: "#0f1117", color: "#e2e8f0" },
@@ -194,7 +195,8 @@ export default function App() {
         return;
       }
       setState(next);
-      setScreen("active");
+      // Show vocabulary card before each scored incident
+      setScreen(next.concept_card?.title ? "concept_card" : "active");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -268,6 +270,16 @@ export default function App() {
           onBack={closeRevisit}
           onRevisit={openRevisit}
         />
+      </div>
+    );
+  }
+
+  // ── Concept card (pre-incident vocabulary screen) ─────────────────────────
+
+  if (screen === "concept_card") {
+    return (
+      <div style={S.app}>
+        <ConceptCard scenario={state} onReady={() => setScreen("active")} />
       </div>
     );
   }

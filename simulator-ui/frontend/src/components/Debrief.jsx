@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 
 const S = {
   page: {
@@ -48,12 +48,19 @@ const S = {
   pastBtnActive: {
     border: "1px solid #3b82f6", color: "#60a5fa",
   },
+  conceptToggle: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    cursor: "pointer", userSelect: "none",
+  },
+  conceptChevron: { fontSize: 12, color: "#475569", marginLeft: 8 },
+  conceptBody: { fontSize: 14, color: "#cbd5e1", lineHeight: 1.7, whiteSpace: "pre-wrap", marginTop: 4 },
 };
 
 export default function Debrief({
   scenario, score, history, isRevisit, isLast,
   onNext, onBack, onRevisit,
 }) {
+  const [conceptOpen, setConceptOpen] = useState(false);
   const d  = scenario?.debrief      || {};
   const cc = scenario?.concept_card || {};
 
@@ -102,8 +109,14 @@ export default function Debrief({
 
       {cc.title && (
         <div style={S.section}>
-          <div style={S.label}>Concept — {cc.title}</div>
-          <div style={S.body}>{cc.body}</div>
+          <div
+            style={S.conceptToggle}
+            onClick={() => setConceptOpen(o => !o)}
+          >
+            <div style={S.label}>Review: {cc.title}</div>
+            <span style={S.conceptChevron}>{conceptOpen ? "▲" : "▼"}</span>
+          </div>
+          {conceptOpen && <div style={S.conceptBody}>{cc.body}</div>}
         </div>
       )}
 
