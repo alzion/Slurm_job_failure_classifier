@@ -1,0 +1,109 @@
+id: "01_cuda_oom"
+title: "Job Down"
+scored: true
+duration_minutes: 8
+
+narrative:
+  intro: |
+    It's 14:32. Kenji's large-scale fine-tuning run just died. The Slurm job exited with code 1
+    and the ML team is blocked. You need to find the root cause and unblock them.
+
+concept_card:
+  title: "CUDA Out-of-Memory (OOM)"
+  body: |
+    CUDA OOM occurs when the sum of tensors, activations, and optimizer states exceeds GPU VRAM.
+    Common causes: batch size too large, gradient accumulation misconfiguration, memory leak in
+    data loaders, or unexpected model growth (e.g. cached KV-attention heads).
+    **Key signal:** `RuntimeError: CUDA out of memory` in the job stderr, plus a spike in
+    `DCGM_FI_DEV_FB_USED` approaching `DCGM_FI_DEV_FB_TOTAL` immediately before the crash.
+
+phases:
+  - id: "initial"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Job 5823 just failed. Training run for the fine-tune was 2 hours in. Slurm exit code 1. Can you look into it?"
+      - from: dev
+        order: 2
+        text: "Slurm says the job ended unexpectedly. Nodes look healthy from the outside. Might be app-level."
+    grafana_dashboard: "/grafana/d/job-failure-v1/job-failure-analysis"
+    log_file: "01_cuda_oom_initial.log"
+    available_actions:
+      - id: "check_grafana"
+        label: "Check GPU memory dashboard"
+        next_phase: "investigating"
+        score_delta: 10
+        consequence: "The dashboard shows DCGM_FI_DEV_FB_USED hit 79.8 GiB / 80 GiB exactly at job exit time. Classic OOM signature."
+      - id: "check_logs"
+        label: "Read the Slurm stderr log"
+        next_phase: "investigating"
+        score_delta: 10
+        consequence: "You find 'RuntimeError: CUDA out of memory. Tried to allocate 2.50 GiB' in the job stderr. Root cause confirmed."
+      - id: "requeue_job"
+        label: "Requeue the job immediately"
+        next_phase: null
+        score_delta: -15
+        consequence: "The requeued job fails again in 2 hours. Same exit code. Requeing without diagnosing wastes expensive GPU time."
+      - id: "restart_nodes"
+        label: "Restart the affected nodes"
+        next_phase: null
+        score_delta: -20
+        consequence: "Node restart knocks out three other running jobs and doesn't fix the underlying memory issue."
+
+  - id: "investigating"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "So it's OOM? We bumped the batch size last night from 32 to 64. Could that be it?"
+      - from: dev
+        order: 2
+        text: "Batch size 64 with bf16 activations on an 80 GiB A100... yeah, the math checks out. That's right at the limit."
+    grafana_dashboard: "/grafana/d/job-failure-v1/job-failure-analysis"
+    log_file: "01_cuda_oom_investigating.log"
+    available_actions:
+      - id: "reduce_batch_size"
+        label: "Reduce batch size to 32 and requeue"
+        next_phase: "resolved"
+        score_delta: 30
+        consequence: "Job 5824 launches at batch size 32. GPU memory stays at ~42 GiB. Training completes successfully."
+      - id: "enable_gradient_checkpointing"
+        label: "Enable gradient checkpointing"
+        next_phase: "resolved"
+        score_delta: 25
+        consequence: "Gradient checkpointing trades compute for memory. Job runs at batch size 64 using ~60 GiB — a valid solution with a ~20% throughput cost."
+      - id: "escalate_to_priya"
+        label: "Escalate to Priya without a fix"
+        next_phase: null
+        score_delta: -10
+        consequence: "Priya asks what the root cause is. You have the diagnosis — escalating without a proposed fix wastes exec time."
+
+  - id: "resolved"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Job 5824 is running clean. Memory steady at 42 GiB. We'll keep batch size at 32 for now and revisit with gradient checkpointing later."
+      - from: priya
+        order: 2
+        text: "Good recovery. Write up a one-liner for the incident log."
+    grafana_dashboard: "/grafana/d/job-failure-v1/job-failure-analysis"
+    log_file: "01_cuda_oom_resolved.log"
+    requires_freetext: true
+    freetext_prompt: "Write a one-sentence incident summary for Priya. Include the job ID, root cause, and what fixed it."
+    freetext_keywords:
+      - ["5823", "5824", "job 58"]
+      - ["oom", "out of memory", "memory"]
+      - ["batch size", "batch", "32"]
+
+debrief:
+  correct_diagnosis: "CUDA Out-of-Memory caused by batch size increase from 32 → 64"
+  what_happened: |
+    Kenji's team increased the training batch size from 32 to 64 the night before the incident.
+    On an 80 GiB A100, bf16 activations at batch size 64 require approximately 79.8 GiB —
+    leaving no headroom. The next allocation attempt triggered a CUDA OOM and the job exited.
+  concept_card_ref: true
+  tpm_lesson: |
+    Batch size changes should be validated against available VRAM before being merged.
+    A simple capacity check (batch × seq_len × d_model × bytes_per_dtype) prevents expensive
+    failed runs. Add this to your team's pre-flight checklist.
+  learning_objective_link: "You diagnosed a GPU incident from logs and metrics and proposed a defensible fix — exactly the skill this simulation builds."
+  top_performer_note: "Top performers went to the logs first: stderr + DCGM metrics together confirm OOM faster than either source alone."

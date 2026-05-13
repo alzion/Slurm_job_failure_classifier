@@ -1,0 +1,13 @@
+characters:
+  kenji:
+    display_name: "Kenji"
+    role: "ML Lead"
+    avatar: "K"
+  priya:
+    display_name: "Priya"
+    role: "CTO"
+    avatar: "P"
+  dev:
+    display_name: "Dev"
+    role: "Infra Lead"
+    avatar: "D"

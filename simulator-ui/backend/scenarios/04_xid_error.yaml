@@ -1,0 +1,115 @@
+id: "04_xid_error"
+title: "Bad Hardware"
+scored: true
+duration_minutes: 14
+
+narrative:
+  intro: |
+    It's 16:55. Three separate jobs on gpu-09 have failed in the past 2 hours.
+    Each ran fine for 20–40 minutes, then died. No pattern in the workloads —
+    different users, different model sizes. The node itself is the common factor.
+
+concept_card:
+  title: "GPU XID Errors and Hardware Retirement"
+  body: |
+    XID errors are NVIDIA GPU error codes written to the kernel log when firmware detects
+    a hardware fault. Common ones in training clusters:
+    - **XID 13** (Graphics Engine Exception) — unrecoverable compute fault
+    - **XID 48** (DBE ECC Error) — uncorrectable double-bit ECC memory error
+    - **XID 79** (GPU Firmware Error) — firmware crash, requires node drain
+    - **XID 94** (Contained Channel Error) — memory fault, may be retried
+    A single XID 48 or 79 is grounds for immediate node quarantine. Hardware RMA
+    should be initiated if errors recur after a node reboot.
+
+phases:
+  - id: "initial"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Three jobs on gpu-09 failed today: 6011, 6024, 6037. All different teams. All died mid-run. Something is wrong with that node."
+      - from: dev
+        order: 2
+        text: "Slurm logs show SIG 9 kills — not app errors. The kernel is killing the processes. Could be XID errors triggering the GPU driver to reset."
+    grafana_dashboard: "/grafana/d/prefailure-signals-v1/prefailure-signals"
+    log_file: "04_xid_initial.log"
+    available_actions:
+      - id: "check_grafana"
+        label: "Check gpu-09 ECC error counters"
+        next_phase: "investigating"
+        score_delta: 15
+        consequence: "Grafana shows DCGM_FI_DEV_ECC_DBE_VOL_TOTAL (double-bit ECC errors) at 14 on gpu-09. Any DBE count > 0 is a serious hardware signal. Something is wrong with the memory."
+      - id: "check_logs"
+        label: "Read the kernel log on gpu-09"
+        next_phase: "investigating"
+        score_delta: 15
+        consequence: "dmesg on gpu-09 shows: 'NVRM: Xid (PCI:0000:81:00): 48, pid=0, Ch 00000000, 2 bit ECC error'. XID 48 appeared 14 times today. This GPU has failing memory cells."
+      - id: "reboot_gpu09"
+        label: "Reboot gpu-09 and retry"
+        next_phase: null
+        score_delta: -10
+        consequence: "After reboot the first job runs for 25 minutes, then hits the same XID 48. Hardware faults persist through reboots. The GPU needs to be quarantined."
+      - id: "ask_kenji_to_retry"
+        label: "Ask Kenji to resubmit on a different node"
+        next_phase: null
+        score_delta: -5
+        consequence: "Kenji resubmits, but gpu-09 is still in the pool and the scheduler may assign other jobs there. The fault node needs to be drained from the cluster."
+
+  - id: "investigating"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "14 XID 48 errors and the node has been in production. That GPU is toast. We should drain it and open an RMA with NVIDIA."
+      - from: priya
+        order: 2
+        text: "How do we know it's the GPU and not the host memory or PCIe slot? I want to be sure before we RMA."
+    grafana_dashboard: "/grafana/d/prefailure-signals-v1/prefailure-signals"
+    log_file: "04_xid_investigating.log"
+    available_actions:
+      - id: "drain_and_rma"
+        label: "Drain gpu-09 immediately, run NVIDIA diagnostics, initiate RMA"
+        next_phase: "resolved"
+        score_delta: 30
+        consequence: "gpu-09 drained. NVIDIA's nvidia-smi nvlink and gpu-burn confirm 14 failing SRAM cells. RMA ticket opened. Replacement GPU arrives in 48 hours."
+      - id: "run_diagnostics_only"
+        label: "Run NVIDIA diagnostics without draining"
+        next_phase: null
+        score_delta: -15
+        consequence: "While running diagnostics, two more jobs are scheduled to gpu-09 and fail. You should drain first, diagnose second."
+      - id: "swap_pcie_slot"
+        label: "Move GPU to a different PCIe slot"
+        next_phase: null
+        score_delta: -10
+        consequence: "XID 48 errors follow the GPU to the new slot. The fault is in the GPU silicon, not the slot or host. This was a wasted maintenance window."
+
+  - id: "resolved"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "gpu-09 is drained and locked out of the scheduler. RMA submitted, replacement ETA 48 hours. We're at 15/16 GPUs but stable."
+      - from: priya
+        order: 2
+        text: "Good call quarantining it fast. How do we catch this earlier next time?"
+    grafana_dashboard: "/grafana/d/prefailure-signals-v1/prefailure-signals"
+    log_file: "04_xid_resolved.log"
+    requires_freetext: true
+    freetext_prompt: "Answer Priya: how do we catch this earlier next time? One or two sentences."
+    freetext_keywords:
+      - ["xid", "ecc", "error code", "dbe"]
+      - ["alert", "monitor", "detect", "threshold"]
+      - ["drain", "quarantine", "isolat", "rma", "retire"]
+
+debrief:
+  correct_diagnosis: "GPU hardware failure — repeated XID 48 (double-bit ECC) errors indicating failing memory cells"
+  what_happened: |
+    gpu-09 developed 14 uncorrectable double-bit ECC errors over two hours, each one causing
+    the GPU driver to terminate the process using the affected memory region. Three jobs from
+    different users all hit the same node and failed mid-run. Draining the node, running
+    nvidia-smi diagnostics, and initiating an RMA resolved the incident. The replacement GPU
+    arrived 48 hours later.
+  concept_card_ref: true
+  tpm_lesson: |
+    Alert on any DCGM_FI_DEV_ECC_DBE_VOL_TOTAL > 0 — a single double-bit ECC error is
+    grounds for investigation. Automate node drain on XID 48 or 79 to prevent the scheduler
+    from assigning further work to a failing GPU. Keep an RMA contact and SLA in your runbook.
+  learning_objective_link: "You identified a hardware fault from recurring XID errors across unrelated jobs and made a defensible node-quarantine and RMA decision."
+  top_performer_note: "Top performers immediately correlated all three job failures to the same node — the pattern across users was the key signal that this was hardware, not software."

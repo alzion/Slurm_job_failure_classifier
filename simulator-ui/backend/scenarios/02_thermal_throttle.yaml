@@ -1,0 +1,113 @@
+id: "02_thermal_throttle"
+title: "Silent Slowdown"
+scored: true
+duration_minutes: 10
+
+narrative:
+  intro: |
+    It's 09:15. No jobs have failed, but Kenji is seeing throughput drop by 40% on gpu-04.
+    The job (run 4471) is still running — it's just slower than expected. Something is quietly
+    degrading performance. Find it before Kenji's deadline slips.
+
+concept_card:
+  title: "GPU Thermal Throttling"
+  body: |
+    Modern GPUs reduce clock speed automatically when die temperature exceeds a safety threshold
+    (typically 83–87°C for A100s). This is called thermal throttling. The GPU stays alive but
+    operates at a fraction of its rated throughput — often 30–60% slower — without throwing an
+    error. Causes include: blocked airflow (dust, cable routing), failed cooling fans,
+    insufficient rack cooling, or sustained workloads on a marginal chassis.
+    **Key signal:** `DCGM_FI_DEV_GPU_TEMP` trending above 85°C while
+    `DCGM_FI_DEV_SM_CLOCK` drops significantly below baseline.
+
+phases:
+  - id: "initial"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Something's wrong with run 4471. Started 2 hours ago on gpu-04, expected 1200 iterations/hour but we're only getting 720. No errors, just slow."
+      - from: dev
+        order: 2
+        text: "Node gpu-04 shows healthy in Slurm. No OOM, no XID errors. Could be a thermal issue — temps on that node have been creeping up this week."
+    grafana_dashboard: "/grafana/d/prefailure-signals-v1/prefailure-signals"
+    log_file: "02_thermal_initial.log"
+    available_actions:
+      - id: "check_grafana"
+        label: "Check GPU temperature dashboard"
+        next_phase: "investigating"
+        score_delta: 15
+        consequence: "DCGM_FI_DEV_GPU_TEMP on gpu-04 reads 91°C. SM clock has dropped from 1410 MHz to 765 MHz — a 46% reduction. Thermal throttle confirmed."
+      - id: "requeue_job"
+        label: "Requeue run 4471 on a different node"
+        next_phase: null
+        score_delta: -10
+        consequence: "The job moves but the cause on gpu-04 is unresolved. Another job will land there and throttle too. Root cause not addressed."
+      - id: "check_logs"
+        label: "Read DCGM logs for gpu-04"
+        next_phase: "investigating"
+        score_delta: 10
+        consequence: "Logs show sustained temperature warnings: 'Thermal throttle active, clocks reduced'. This confirms the issue without yet knowing the fix."
+      - id: "alert_hardware_team"
+        label: "Page the hardware team immediately"
+        next_phase: null
+        score_delta: -5
+        consequence: "Hardware team asks what's wrong. You don't have enough info yet to justify an urgent page — gather data first."
+
+  - id: "investigating"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "I checked the chassis — one of the cooling fans on gpu-04's rack unit is seized. That explains the heat buildup."
+      - from: kenji
+        order: 2
+        text: "Can we move run 4471 and let the hardware team fix the fan? The deadline is tomorrow."
+    grafana_dashboard: "/grafana/d/prefailure-signals-v1/prefailure-signals"
+    log_file: "02_thermal_investigating.log"
+    available_actions:
+      - id: "reduce_concurrency"
+        label: "Drain gpu-04, migrate run 4471, schedule fan repair"
+        next_phase: "resolved"
+        score_delta: 30
+        consequence: "Run 4471 migrates to gpu-07. Temperatures drop to 76°C within 10 minutes. Throughput recovers to 1190 iterations/hour. Fan repair is scheduled for the maintenance window."
+      - id: "increase_fan_speed"
+        label: "Override fan speed via IPMI"
+        next_phase: "resolved"
+        score_delta: 15
+        consequence: "IPMI fan override brings temp down to 82°C and recovers ~70% of lost throughput. A partial fix — the hardware issue still needs repair but buys time."
+      - id: "ignore_and_wait"
+        label: "Let it run — the job will finish eventually"
+        next_phase: null
+        score_delta: -20
+        consequence: "Two hours later gpu-04 hits 96°C and the GPU enters emergency shutdown. The job crashes and the node goes offline for 4 hours."
+
+  - id: "resolved"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Run 4471 is back to full speed on gpu-07. 1185 iterations/hour. We should make the deadline. Thanks for the fast turnaround."
+      - from: priya
+        order: 2
+        text: "Good call draining the node proactively. Write a quick status update for me."
+    grafana_dashboard: "/grafana/d/prefailure-signals-v1/prefailure-signals"
+    log_file: "02_thermal_resolved.log"
+    requires_freetext: true
+    freetext_prompt: "Send Priya a one-sentence status update. Include the run ID, root cause, and resolution."
+    freetext_keywords:
+      - ["4471", "run 4471"]
+      - ["throttl", "thermal", "temperature", "heat"]
+      - ["concurren", "gpu-04", "drained", "migrated", "fan"]
+
+debrief:
+  correct_diagnosis: "Thermal throttling on gpu-04 caused by a seized cooling fan"
+  what_happened: |
+    A seized cooling fan in gpu-04's rack unit allowed die temperature to climb to 91°C.
+    The GPU's thermal protection system halved the SM clock, reducing throughput by 46%.
+    The job remained alive — no error codes — making this a silent degradation rather than
+    a hard failure. Migrating the job and scheduling fan repair resolved the incident.
+  concept_card_ref: true
+  tpm_lesson: |
+    Silent performance regressions are harder to catch than failures. Set alerting on
+    DCGM_FI_DEV_GPU_TEMP > 85°C and SM clock drops > 20% from baseline. If you wait for
+    job failure you've already lost hours of GPU time.
+  learning_objective_link: "You identified a root cause that left no error in the logs — only in the metrics — and made a defensible escalation and migration decision."
+  top_performer_note: "Top performers checked the temperature dashboard first and correlated the clock-speed drop before taking any action."

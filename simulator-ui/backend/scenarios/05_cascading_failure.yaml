@@ -1,0 +1,128 @@
+id: "05_cascading_failure"
+title: "Everything at Once"
+scored: true
+duration_minutes: 18
+
+narrative:
+  intro: |
+    It's 03:12. Your pager goes off. Eleven jobs have failed in the last 8 minutes.
+    Slack is on fire. Priya is awake. This is a cascading failure — multiple root
+    causes feeding each other. Stay calm, triage methodically, and find the chain.
+
+concept_card:
+  title: "Cascading Infrastructure Failures"
+  body: |
+    Cascading failures happen when a primary fault triggers secondary failures that
+    obscure the original cause. Common pattern: storage degradation causes job I/O
+    to stall → jobs hit wall-time limits → mass job cancellation → nodes appear
+    healthy individually but the cluster is effectively down.
+    **Triage principle:** separate correlation from causation. Find the earliest
+    anomaly in the timeline — that is your primary fault. Everything after it is
+    downstream. Fix the root, and the cascade resolves.
+    **Common triggers in GPU clusters:** NFS/Lustre storage outage, network fabric
+    saturation, shared node running out of /tmp, or a rogue job consuming all
+    interconnect bandwidth.
+
+phases:
+  - id: "initial"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Jobs 7100–7110 all dead. Different nodes, different users. This is not a node issue — something infrastructure-level is wrong."
+      - from: dev
+        order: 2
+        text: "I see the same thing. Exit codes are all 1 or 9. Started at 03:04. Checking the cluster now."
+      - from: priya
+        order: 3
+        text: "We have a training deadline at 08:00. What's the blast radius and what do you need from me?"
+    grafana_dashboard: "/grafana/d/fleet-health-v1/fleet-health"
+    log_file: "05_cascading_initial.log"
+    available_actions:
+      - id: "check_grafana"
+        label: "Check cluster overview dashboard for earliest anomaly"
+        next_phase: "investigating"
+        score_delta: 20
+        consequence: "Grafana shows storage I/O latency spiked to 8,400 ms at 03:04 — the exact time jobs started failing. Normal is < 50 ms. The Lustre filesystem is the primary fault."
+      - id: "check_logs"
+        label: "Read job stderr for the first failed job"
+        next_phase: "investigating"
+        score_delta: 10
+        consequence: "Job 7100 stderr: 'OSError: [Errno 5] Input/output error' during checkpoint write at 03:04:17. Storage fault confirmed as the trigger."
+      - id: "restart_failed_jobs"
+        label: "Immediately requeue all 11 failed jobs"
+        next_phase: null
+        score_delta: -25
+        consequence: "Requeued jobs start, then stall on checkpoint I/O and fail again within 90 seconds. Requeueing into an active storage fault wastes compute and creates more noise."
+      - id: "page_all_teams"
+        label: "Page all team leads simultaneously"
+        next_phase: null
+        score_delta: -10
+        consequence: "Everyone wakes up but no one has more info than you. You're creating noise without signal. Diagnose first, then give specific asks."
+
+  - id: "investigating"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "Lustre MDS log shows OST-0 went read-only at 03:03:51 — filesystem detected a write error and self-protected. OST-0 has been having intermittent I/O errors for 3 days but nobody escalated it."
+      - from: kenji
+        order: 2
+        text: "Three days? There were warning signs and nobody acted? Can we failover to OST-1?"
+      - from: dev
+        order: 3
+        text: "OST-1 has capacity. We'd need to remount /scratch on all nodes. That's a 15-minute rolling restart. Jobs that checkpoint to /scratch will need to requeue after."
+    grafana_dashboard: "/grafana/d/fleet-health-v1/fleet-health"
+    log_file: "05_cascading_investigating.log"
+    available_actions:
+      - id: "failover_and_requeue"
+        label: "Failover to OST-1, drain affected nodes, requeue from checkpoints"
+        next_phase: "resolved"
+        score_delta: 30
+        consequence: "OST-1 remounted across all nodes in 14 minutes. 8 of 11 jobs restored from checkpoints within 20 minutes. 3 jobs had no checkpoint — must restart from scratch. Storage monitoring alert added for OST error rate."
+      - id: "wait_for_ost0_recovery"
+        label: "Wait for OST-0 to recover on its own"
+        next_phase: null
+        score_delta: -20
+        consequence: "OST-0 remains read-only for 2.5 hours. Storage recovery requires manual fsck. Waiting was not an option — the team needed a decision."
+      - id: "partial_failover"
+        label: "Failover OST-0 but don't drain nodes — let jobs decide"
+        next_phase: null
+        score_delta: -10
+        consequence: "Without a coordinated node drain, some jobs pick up the new mount and others don't. Mixed state causes 5 more failures as jobs checkpoint to the wrong path."
+
+  - id: "resolved"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "8 jobs restored from checkpoint and running clean on OST-1. 3 jobs requeued from scratch — ETA 4 hours. Storage team has OST-0 in repair mode."
+      - from: kenji
+        order: 2
+        text: "We might still make the 08:00 deadline with the 8 that restored. The 3 restarts are the ones without checkpoints — lesson learned."
+      - from: priya
+        order: 3
+        text: "Good coordination. Write me a post-incident summary — what happened, what we're doing to prevent it, and what the 08:00 risk is."
+    grafana_dashboard: "/grafana/d/fleet-health-v1/fleet-health"
+    log_file: "05_cascading_resolved.log"
+    requires_freetext: true
+    freetext_prompt: "Write Priya's post-incident summary. Include the root cause, the timeline, what was done, and the risk to the 08:00 deadline."
+    freetext_keywords:
+      - ["lustre", "ost", "storage", "filesystem", "nfs"]
+      - ["checkpoint", "restore", "requeue", "recover"]
+      - ["08:00", "deadline", "risk", "3 jobs", "8 jobs"]
+      - ["monitor", "alert", "prevent", "escalat"]
+
+debrief:
+  correct_diagnosis: "Lustre OST-0 storage failure (3-day slow degradation) caused mass job I/O failure and cascading job cancellation"
+  what_happened: |
+    OST-0, one of the Lustre object storage targets, had been logging intermittent I/O errors
+    for 3 days with no alert escalation. At 03:03:51 it exceeded its error threshold and
+    transitioned to read-only mode to protect data integrity. All 11 jobs writing checkpoints
+    to /scratch hit simultaneous I/O errors and died. Failing over to OST-1 and requeuing from
+    the most recent checkpoints restored 8 of 11 jobs within 20 minutes.
+  concept_card_ref: true
+  tpm_lesson: |
+    Cascading failures have an original fault — find the earliest timestamp anomaly, not the
+    loudest current signal. In this case, 3 days of storage warnings went unescalated because
+    there was no alert on OST error rate. Pre-failure signals in metrics are usually there;
+    the gap is in alerting thresholds and on-call escalation paths.
+  learning_objective_link: "You triaged a multi-signal incident to its root cause, made a defensible failover decision under deadline pressure, and communicated blast radius to the CTO."
+  top_performer_note: "Top performers checked the overview dashboard first and found the storage I/O latency spike at 03:04 before reading any individual job log — the cluster-level view revealed the common cause."

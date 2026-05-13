@@ -1,0 +1,116 @@
+id: "03_nccl_failure"
+title: "Lost Connection"
+scored: true
+duration_minutes: 12
+
+narrative:
+  intro: |
+    It's 11:45. A distributed training job across 8 nodes just died 6 hours in.
+    The error references NCCL — the collective communication library that coordinates
+    gradient synchronisation between GPUs. One bad link can kill the whole run.
+
+concept_card:
+  title: "NCCL Communication Failure"
+  body: |
+    NCCL (NVIDIA Collective Communications Library) handles all-reduce, broadcast, and
+    scatter operations in distributed training. A single node that drops off the ring
+    causes the entire collective to hang, then time out with `ncclRemoteError` or
+    `ncclSystemError`. Root causes include: NIC failure, infiniband fabric errors,
+    MTU mismatch, NCCL timeout too short for large model sizes, or a kernel crash
+    on one participant node.
+    **Key signals:** `NCCL WARN` in job stderr, infiniband error counters in Grafana,
+    `Xid 79` (GPU firmware error) or kernel panics in the node logs.
+
+phases:
+  - id: "initial"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Distributed run across nodes gpu-01 through gpu-08 just crashed. 6 hours of training gone. Error says NCCL. This is infuriating."
+      - from: dev
+        order: 2
+        text: "Slurm shows all 8 nodes returned exit code 1 at exactly the same second. Classic collective failure — one node took everyone down."
+    grafana_dashboard: "/grafana/d/node-reliability-v1/node-reliability"
+    log_file: "03_nccl_initial.log"
+    available_actions:
+      - id: "check_grafana"
+        label: "Check infiniband error counters in Grafana"
+        next_phase: "investigating"
+        score_delta: 15
+        consequence: "Infiniband port error counters on gpu-05 spiked to 847 errors/sec at 11:38 — 7 minutes before the job died. gpu-05 is the likely culprit."
+      - id: "check_logs"
+        label: "Read NCCL error logs from the job"
+        next_phase: "investigating"
+        score_delta: 10
+        consequence: "Job stderr shows: 'NCCL WARN Bootstrap: Connection closed unexpectedly from rank 4' — rank 4 maps to gpu-05. Node fabric issue confirmed."
+      - id: "requeue_all_nodes"
+        label: "Requeue the job on the same 8 nodes"
+        next_phase: null
+        score_delta: -20
+        consequence: "The job fails again in 30 minutes. gpu-05 still has the fabric problem. Requeing without isolating the bad node wastes 6 hours of compute."
+      - id: "escalate_immediately"
+        label: "Page the hardware team and Priya"
+        next_phase: null
+        score_delta: -5
+        consequence: "Priya wants to know the root cause before deciding. Hardware team asks which node is suspect. You need more data first."
+
+  - id: "investigating"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "Pulled logs from gpu-05 — kernel shows an infiniband port flap at 11:38:22. The NIC is partially functional but dropping packets under load."
+      - from: kenji
+        order: 2
+        text: "Can we isolate gpu-05 and requeue on the remaining 7? Or do we need a clean 8?"
+    grafana_dashboard: "/grafana/d/node-reliability-v1/node-reliability"
+    log_file: "03_nccl_investigating.log"
+    available_actions:
+      - id: "drain_and_requeue_7"
+        label: "Drain gpu-05, requeue on 7 nodes"
+        next_phase: "resolved"
+        score_delta: 25
+        consequence: "Job restarts on gpu-01 through gpu-08 minus gpu-05. NCCL initializes cleanly. Training resumes from the last checkpoint. gpu-05 flagged for NIC replacement."
+      - id: "replace_nic_first"
+        label: "Wait for NIC replacement before requeuing"
+        next_phase: "resolved"
+        score_delta: 15
+        consequence: "NIC replacement takes 3 hours. Job then runs clean on 8 nodes. Technically correct but Kenji's deadline slips — restoring from checkpoint on 7 nodes was faster."
+      - id: "increase_nccl_timeout"
+        label: "Increase NCCL timeout and retry on same nodes"
+        next_phase: null
+        score_delta: -15
+        consequence: "Timeout increase masks the symptom but doesn't fix the NIC. Job runs for 45 minutes then dies again with the same error."
+
+  - id: "resolved"
+    slack_messages:
+      - from: kenji
+        order: 1
+        text: "Back up on 7 nodes. Checkpoint restored. Throughput is 87.5% of baseline — acceptable. Thanks for isolating the bad node so quickly."
+      - from: priya
+        order: 2
+        text: "Good isolation call. How do we prevent this next time?"
+    grafana_dashboard: "/grafana/d/node-reliability-v1/node-reliability"
+    log_file: "03_nccl_resolved.log"
+    requires_freetext: true
+    freetext_prompt: "Answer Priya: how do we prevent this next time? One to two sentences."
+    freetext_keywords:
+      - ["infiniband", "ib", "fabric", "nic", "network"]
+      - ["monitor", "alert", "detect", "counter", "error rate"]
+      - ["checkpoint", "isolat", "drain", "spare"]
+
+debrief:
+  correct_diagnosis: "NCCL collective failure caused by infiniband port flap on gpu-05"
+  what_happened: |
+    An infiniband NIC on gpu-05 entered a degraded state at 11:38, dropping packets under load.
+    NCCL's all-reduce collective requires all participants; when rank 4 (gpu-05) stopped
+    responding, the other 7 ranks hung waiting for it, then timed out together. The entire
+    8-node job exited simultaneously. Draining gpu-05 and resuming from the last checkpoint
+    on 7 nodes recovered the run.
+  concept_card_ref: true
+  tpm_lesson: |
+    Distributed training is only as reliable as its weakest network link. Alert on infiniband
+    port error counters (target: < 1 error/min per port). Checkpoint frequently enough that
+    a node failure costs < 30 minutes of work. Maintain a pool of warm spare nodes so
+    N-1 restarts don't require waiting for hardware repair.
+  learning_objective_link: "You traced a silent network fault through infiniband counters and made a defensible node-isolation decision that saved hours of training time."
+  top_performer_note: "Top performers correlated the IB error spike timestamp with NCCL failure time — proving causality before acting on it."

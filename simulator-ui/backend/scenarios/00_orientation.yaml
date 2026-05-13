@@ -1,0 +1,34 @@
+id: "00_orientation"
+title: "Orientation"
+scored: false
+duration_minutes: 5
+
+narrative:
+  intro: |
+    Welcome to the AI Infra TPM Simulator. This orientation walk-through will familiarise you
+    with the three data sources you'll use throughout the exercise: Slack messages from your team,
+    Grafana dashboards, and raw Slurm/DCGM logs. No decisions to make here — explore freely, then
+    hit Continue when you're ready.
+
+concept_card:
+  title: "Your three data sources"
+  body: |
+    **Slack feed** — your real-time signal. Team members surface symptoms and context as they notice them.
+    **Grafana** — time-series metrics for GPU utilisation, temperature, memory, and job throughput.
+    **Logs** — the ground truth. DCGM error codes, Slurm exit codes, and kernel messages live here.
+    During an incident you'll triangulate all three to reach a confident root-cause diagnosis.
+
+phases:
+  - id: "initial"
+    slack_messages:
+      - from: dev
+        order: 1
+        text: "Hey, welcome aboard! I'm Dev, Infra Lead. I'll be your guide for orientation. No fires today — just getting you familiar with the tooling."
+      - from: kenji
+        order: 2
+        text: "Hi! I'm Kenji, ML Lead. If you see a Slack message from me during an incident, it means one of my training jobs is in trouble. Today is calm though."
+      - from: priya
+        order: 3
+        text: "I'm Priya, CTO. I'll only ping you when I need an executive summary or an escalation decision. Keep your updates crisp."
+    grafana_dashboard: "/grafana/d/fleet-health-v1/fleet-health"
+    log_file: "00_orientation.log"
