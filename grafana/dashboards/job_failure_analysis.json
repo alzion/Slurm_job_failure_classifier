@@ -21,7 +21,7 @@
       "targets": [
         {
           "datasource": { "type": "postgres", "uid": "postgres-fleet" },
-          "rawSql": "SELECT\n  date_trunc('day', end_time) AS time,\n  failure_category,\n  COUNT(*) AS failures\nFROM job_events\nWHERE end_time >= NOW() - INTERVAL '30 days'\n  AND failure_category IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "rawSql": "SELECT\n  date_trunc('day', end_time) AS \"time\",\n  COUNT(*) FILTER (WHERE failure_category = 'CUDA_OOM')          AS \"CUDA_OOM\",\n  COUNT(*) FILTER (WHERE failure_category = 'THERMAL_THROTTLE')   AS \"THERMAL_THROTTLE\",\n  COUNT(*) FILTER (WHERE failure_category = 'NCCL_COMM_FAILURE')  AS \"NCCL_COMM_FAILURE\",\n  COUNT(*) FILTER (WHERE failure_category = 'GPU_HARDWARE')        AS \"GPU_HARDWARE\",\n  COUNT(*) FILTER (WHERE failure_category = 'INFRA_STORAGE')       AS \"INFRA_STORAGE\",\n  COUNT(*) FILTER (WHERE failure_category = 'PREEMPTION')          AS \"PREEMPTION\",\n  COUNT(*) FILTER (WHERE failure_category = 'TIMEOUT')             AS \"TIMEOUT\",\n  COUNT(*) FILTER (WHERE failure_category = 'USER_ERROR')          AS \"USER_ERROR\"\nFROM job_events\nWHERE end_time >= NOW() - INTERVAL '30 days'\nGROUP BY 1\nORDER BY 1",
           "format": "table",
           "refId": "A"
         }
@@ -29,14 +29,14 @@
       "fieldConfig": {
         "defaults": { "unit": "short", "custom": { "fillOpacity": 80 } },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "GPU_HARDWARE" },    "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "NCCL_COMM_FAILURE" },"properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "CUDA_OOM" },         "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "THERMAL_THROTTLE" },"properties": [{ "id": "color", "value": { "fixedColor": "dark-orange", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "INFRA_STORAGE" },   "properties": [{ "id": "color", "value": { "fixedColor": "blue",   "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "PREEMPTION" },      "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "TIMEOUT" },         "properties": [{ "id": "color", "value": { "fixedColor": "light-blue","mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "USER_ERROR" },      "properties": [{ "id": "color", "value": { "fixedColor": "grey",   "mode": "fixed" } }] }
+          { "matcher": { "id": "byName", "options": "GPU_HARDWARE" },     "properties": [{ "id": "color", "value": { "fixedColor": "red",        "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "NCCL_COMM_FAILURE" },"properties": [{ "id": "color", "value": { "fixedColor": "orange",     "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "CUDA_OOM" },         "properties": [{ "id": "color", "value": { "fixedColor": "yellow",     "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "THERMAL_THROTTLE" }, "properties": [{ "id": "color", "value": { "fixedColor": "dark-orange","mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "INFRA_STORAGE" },    "properties": [{ "id": "color", "value": { "fixedColor": "blue",       "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "PREEMPTION" },       "properties": [{ "id": "color", "value": { "fixedColor": "purple",     "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "TIMEOUT" },          "properties": [{ "id": "color", "value": { "fixedColor": "light-blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "USER_ERROR" },       "properties": [{ "id": "color", "value": { "fixedColor": "grey",       "mode": "fixed" } }] }
         ]
       },
       "options": {
@@ -49,9 +49,7 @@
         "tooltip": { "mode": "multi", "sort": "desc" },
         "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }
       },
-      "transformations": [
-        { "id": "groupingToMatrix", "options": { "columnField": "failure_category", "rowField": "time", "valueField": "failures" } }
-      ]
+      "transformations": []
     },
     {
       "id": 2,
