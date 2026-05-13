@@ -1,0 +1,13 @@
+yourdomain.com {
+    handle /grafana/* {
+        reverse_proxy grafana:3000
+    }
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
+    }
+    forward_auth oauth2-proxy:4180 {
+        uri /oauth2/auth
+        copy_headers X-Auth-Request-Email
+    }
+    reverse_proxy simulator-ui:8080
+}
