@@ -1,0 +1,118 @@
+services:
+  slurm-simulator:
+    build: .
+    command: python simulator/slurm_log_sim.py
+    volumes:
+      - ./logs:/logs
+    restart: unless-stopped
+
+  sacct-simulator:
+    build: .
+    command: python simulator/sacct_sim.py
+    volumes:
+      - ./logs:/logs
+    restart: unless-stopped
+
+  dcgm-simulator:
+    build: .
+    command: python simulator/dcgm_sim.py
+    environment:
+      PUSHGATEWAY_URL: http://pushgateway:9091
+    depends_on:
+      - pushgateway
+    restart: unless-stopped
+
+  pushgateway:
+    image: prom/pushgateway:latest
+    ports:
+      - "9091:9091"
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - pushgateway
+      - alertmanager
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: fleetdb
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet123
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+      - postgres_data:/var/lib/postgresql/data
+
+  classifier:
+    build: .
+    command: python -m classifier.classifier
+    volumes:
+      - ./logs:/logs:ro
+    environment:
+      POSTGRES_DB: fleetdb
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet123
+      POSTGRES_HOST: postgres
+      PROMETHEUS_URL: http://prometheus:9090
+    depends_on:
+      - postgres
+      - prometheus
+    restart: unless-stopped
+
+  node-health-rollup:
+    build: .
+    command: python -m classifier.node_health_rollup
+    environment:
+      POSTGRES_DB: fleetdb
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet123
+      POSTGRES_HOST: postgres
+      PROMETHEUS_URL: http://prometheus:9090
+      ROLLUP_INTERVAL: "3600"
+    depends_on:
+      - postgres
+      - prometheus
+    restart: unless-stopped
+
+  correlation-engine:
+    build: .
+    command: python -m classifier.correlation_engine
+    environment:
+      POSTGRES_DB: fleetdb
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet123
+      POSTGRES_HOST: postgres
+      PROMETHEUS_URL: http://prometheus:9090
+    depends_on:
+      - postgres
+      - prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    depends_on:
+      - postgres
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+volumes:
+  postgres_data:

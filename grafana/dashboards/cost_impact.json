@@ -1,0 +1,203 @@
+{
+  "title": "Cost Impact",
+  "uid": "cost-impact-v1",
+  "description": "GPU-hours lost to failures, estimated dollar cost, and the preventable fraction where pre-failure signals were detectable.",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "tags": ["cost", "impact"],
+  "editable": true,
+  "graphTooltip": 0,
+  "templating": {
+    "list": [
+      {
+        "name": "gpu_cost_per_hour",
+        "label": "GPU Cost ($/hr)",
+        "type": "textbox",
+        "current": { "value": "2.00", "text": "2.00" },
+        "query": "2.00",
+        "hide": 0,
+        "description": "Dollar cost per GPU per hour. Default: $2.00 (A100 spot-ish rate)."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "GPU-Hours Lost per Failure Category (30d)",
+      "description": "gpu_count × elapsed_seconds / 3600 aggregated by failure category.",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 0, "w": 16, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  failure_category AS \"Category\",\n  ROUND(SUM(gpu_count * elapsed_seconds / 3600.0)::numeric, 1) AS \"GPU Hours Lost\"\nFROM job_events\nWHERE failure_category IS NOT NULL\n  AND state != 'COMPLETED'\n  AND end_time >= NOW() - INTERVAL '30 days'\nGROUP BY failure_category\nORDER BY \"GPU Hours Lost\" DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 80 }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "Category",
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "fillOpacity": 80,
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "orientation": "vertical"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total Cost Impact",
+      "description": "Sum of all GPU-hours lost × $/hr variable. Does not include downstream research time lost.",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 5 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  ROUND(\n    SUM(gpu_count * elapsed_seconds / 3600.0) * ${gpu_cost_per_hour}\n  ::numeric, 2) AS total_cost_usd\nFROM job_events\nWHERE failure_category IS NOT NULL\n  AND state != 'COMPLETED'\n  AND end_time >= NOW() - INTERVAL '30 days'",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 1000 },
+              { "color": "red",    "value": 5000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Preventable Cost",
+      "description": "Cost from failures where a DCGM pre-failure signal was detected — these could have been avoided with proactive node cordon.",
+      "type": "stat",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 5 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  ROUND(\n    SUM(je.gpu_count * je.elapsed_seconds / 3600.0) * ${gpu_cost_per_hour}\n  ::numeric, 2) AS preventable_cost_usd\nFROM job_events je\nWHERE je.failure_category IS NOT NULL\n  AND je.state != 'COMPLETED'\n  AND je.end_time >= NOW() - INTERVAL '30 days'\n  AND EXISTS (\n    SELECT 1 FROM correlation_results cr\n    WHERE cr.job_id = je.job_id\n      AND cr.signal_detected = true\n  )",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "red",    "value": 2000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Preventable Fraction",
+      "description": "What percentage of the total dollar cost could have been avoided if nodes were cordoned on first signal.",
+      "type": "gauge",
+      "gridPos": { "x": 16, "y": 5, "w": 8, "h": 5 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "WITH all_cost AS (\n  SELECT COALESCE(SUM(gpu_count * elapsed_seconds / 3600.0), 0) AS total\n  FROM job_events\n  WHERE failure_category IS NOT NULL AND state != 'COMPLETED'\n    AND end_time >= NOW() - INTERVAL '30 days'\n),\npreventable AS (\n  SELECT COALESCE(SUM(je.gpu_count * je.elapsed_seconds / 3600.0), 0) AS prev\n  FROM job_events je\n  WHERE je.failure_category IS NOT NULL AND je.state != 'COMPLETED'\n    AND je.end_time >= NOW() - INTERVAL '30 days'\n    AND EXISTS (\n      SELECT 1 FROM correlation_results cr\n      WHERE cr.job_id = je.job_id AND cr.signal_detected = true\n    )\n)\nSELECT\n  ROUND(\n    100.0 * preventable.prev / NULLIF(all_cost.total, 0)\n  ::numeric, 1) AS preventable_pct\nFROM all_cost, preventable",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red",    "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      }
+    },
+    {
+      "id": 5,
+      "title": "Daily GPU-Hours Lost (30d)",
+      "description": "Day-by-day breakdown of GPU compute hours lost to failures.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 10, "w": 24, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  date_trunc('day', end_time) AS time,\n  failure_category,\n  ROUND(SUM(gpu_count * elapsed_seconds / 3600.0)::numeric, 1) AS gpu_hours\nFROM job_events\nWHERE failure_category IS NOT NULL\n  AND state != 'COMPLETED'\n  AND end_time >= NOW() - INTERVAL '30 days'\nGROUP BY 1, 2\nORDER BY 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 60, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }
+      },
+      "transformations": [
+        { "id": "convertFieldType", "options": { "fields": [{ "destinationType": "time", "targetField": "time" }] } },
+        { "id": "groupingToMatrix", "options": { "columnField": "failure_category", "rowField": "time", "valueField": "gpu_hours" } }
+      ]
+    }
+  ]
+}

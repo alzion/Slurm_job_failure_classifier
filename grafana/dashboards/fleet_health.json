@@ -1,0 +1,165 @@
+{
+  "title": "Fleet Health",
+  "uid": "fleet-health-v1",
+  "description": "Real-time GPU health: temperatures, ECC error rates, NVLink CRC, and XID errors across all nodes.",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "tags": ["gpu", "health"],
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "GPU Temperature by Node (°C)",
+      "description": "Heatmap of GPU temperatures across all nodes. Red = overheating (>82°C).",
+      "type": "heatmap",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+          "expr": "avg by(hostname) (DCGM_FI_DEV_GPU_TEMP{hostname=~\"gpu.*\"})",
+          "legendFormat": "{{hostname}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "cellGap": 2,
+        "color": {
+          "mode": "scheme",
+          "scheme": "Oranges",
+          "fill": "dark-orange",
+          "min": 60,
+          "max": 95,
+          "steps": 64
+        },
+        "yAxis": {
+          "unit": "celsius",
+          "decimals": 0,
+          "axisPlacement": "left"
+        },
+        "tooltip": { "mode": "single", "showColorScale": true },
+        "legend": { "show": true }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "celsius", "custom": { "hideFrom": { "tooltip": false, "viz": false, "legend": false } } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "ECC Single-Bit Error Rate (errors/hour)",
+      "description": "Rising SBE rate >30/hr is the 90-minute early warning for GPU_HARDWARE failures.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+          "expr": "rate(DCGM_FI_DEV_ECC_SBE_VOL_TOTAL{hostname=~\"gpu.*\"}[5m]) * 3600",
+          "legendFormat": "{{hostname}} GPU{{gpu}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 30 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] }
+      }
+    },
+    {
+      "id": 3,
+      "title": "NVLink CRC Flit Error Rate (errors/sec)",
+      "description": "Any increment from zero predicts NCCL_COMM_FAILURE with ~90-minute lead time.",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+          "expr": "rate(DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL{hostname=~\"gpu.*\"}[5m])",
+          "legendFormat": "{{hostname}} GPU{{gpu}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.001 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] }
+      }
+    },
+    {
+      "id": 4,
+      "title": "XID Errors",
+      "description": "Any XID > 0 indicates active GPU hardware event. XID 48=ECC, 74=NVLink, 79=bus error.",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 17, "w": 24, "h": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus-fleet" },
+          "expr": "sum by(hostname) (DCGM_FI_DEV_XID_ERRORS{hostname=~\"gpu.*\"})",
+          "legendFormat": "{{hostname}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "OK", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    }
+  ]
+}

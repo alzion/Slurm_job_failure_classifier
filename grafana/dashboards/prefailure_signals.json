@@ -1,0 +1,206 @@
+{
+  "title": "Pre-Failure Signal Correlation",
+  "uid": "prefailure-signals-v1",
+  "description": "How often DCGM signals precede failures, lead time distribution, anomaly strength, and active precursors.",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "tags": ["correlation", "signals"],
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "id": 1,
+      "title": "% Failures with Detectable Pre-Failure Signal",
+      "description": "Percentage of all classified failure events where at least one DCGM signal crossed its threshold before the job ended.",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 6 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  ROUND(\n    100.0 * COUNT(*) FILTER (WHERE signal_detected) /\n    NULLIF(COUNT(*), 0)\n  , 1) AS pct\nFROM correlation_results",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "green",  "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Signal Detection by Metric",
+      "description": "How many signals detected per metric type.",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 18, "h": 6 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  metric_name AS metric,\n  COUNT(*) FILTER (WHERE signal_detected) AS detected\nFROM correlation_results\nGROUP BY metric_name\nORDER BY detected DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/detected/" },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "transformations": [
+        { "id": "labelsToFields", "options": { "valueLabel": "metric" } }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Lead Time Distribution (seconds before failure)",
+      "description": "How far in advance DCGM signals first crossed their thresholds relative to job end time.",
+      "type": "histogram",
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT lead_time_seconds AS lead_time\nFROM correlation_results\nWHERE signal_detected = true\n  AND lead_time_seconds IS NOT NULL\nORDER BY lead_time_seconds",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 80, "gradientMode": "none" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "bucketSize": "auto",
+        "bucketOffset": 0,
+        "combine": false,
+        "fillOpacity": 80,
+        "gradientMode": "none",
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Anomaly Ratio vs Lead Time by Metric",
+      "description": "Each point is a detected signal. Stronger anomalies appear on the right; earlier warnings higher up.",
+      "type": "xychart",
+      "gridPos": { "x": 12, "y": 6, "w": 12, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  metric_name,\n  anomaly_ratio,\n  lead_time_seconds\nFROM correlation_results\nWHERE signal_detected = true\n  AND lead_time_seconds IS NOT NULL\n  AND anomaly_ratio IS NOT NULL",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "pointSize": { "fixed": 8 } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mapping": "auto",
+        "series": [],
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "dims": {
+          "x": "anomaly_ratio",
+          "exclude": ["metric_name"]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Active Precursor Alerts (signals in last 2 hours)",
+      "description": "Jobs with DCGM anomalies detected in the last 2 hours that have not yet failed. Potential early warnings.",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 15, "w": 24, "h": 7 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  cr.job_id AS \"Job ID\",\n  je.job_name AS \"Job Name\",\n  cr.node_hostname AS \"Node\",\n  cr.metric_name AS \"Metric\",\n  cr.lead_time_seconds AS \"Lead Time (s)\",\n  ROUND(cr.anomaly_ratio::numeric, 2) AS \"Anomaly Ratio\",\n  cr.signal_onset_time AS \"Signal Onset\"\nFROM correlation_results cr\nJOIN job_events je ON cr.job_id = je.job_id\nWHERE cr.signal_detected = true\n  AND cr.signal_onset_time >= NOW() - INTERVAL '2 hours'\nORDER BY cr.signal_onset_time DESC\nLIMIT 50",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Anomaly Ratio" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green",  "value": null },
+                    { "color": "yellow", "value": 1.5 },
+                    { "color": "red",    "value": 3.0 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Lead Time (s)" },
+            "properties": [{ "id": "unit", "value": "s" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Signal Onset" },
+            "properties": [{ "id": "unit", "value": "dateTimeAsLocal" }]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [{ "displayName": "Signal Onset", "desc": true }],
+        "footer": { "show": false }
+      }
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "title": "Job Failure Analysis",
+  "uid": "job-failure-v1",
+  "description": "Failure trends, category distribution, top failing nodes, and daily failure rates over 30 days.",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "tags": ["jobs", "failures"],
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Failures by Category per Day (30d)",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 0, "w": 16, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  date_trunc('day', end_time) AS time,\n  failure_category,\n  COUNT(*) AS failures\nFROM job_events\nWHERE end_time >= NOW() - INTERVAL '30 days'\n  AND failure_category IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "fillOpacity": 80 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "GPU_HARDWARE" },    "properties": [{ "id": "color", "value": { "fixedColor": "red",    "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "NCCL_COMM_FAILURE" },"properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "CUDA_OOM" },         "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "THERMAL_THROTTLE" },"properties": [{ "id": "color", "value": { "fixedColor": "dark-orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "INFRA_STORAGE" },   "properties": [{ "id": "color", "value": { "fixedColor": "blue",   "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "PREEMPTION" },      "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "TIMEOUT" },         "properties": [{ "id": "color", "value": { "fixedColor": "light-blue","mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "USER_ERROR" },      "properties": [{ "id": "color", "value": { "fixedColor": "grey",   "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "xField": "time",
+        "barWidth": 0.6,
+        "stacking": "normal",
+        "groupWidth": 0.7,
+        "fillOpacity": 80,
+        "gradientMode": "none",
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }
+      },
+      "transformations": [
+        { "id": "groupingToMatrix", "options": { "columnField": "failure_category", "rowField": "time", "valueField": "failures" } }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Failure Category Distribution (7d)",
+      "type": "piechart",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  failure_category AS category,\n  COUNT(*) AS count\nFROM job_events\nWHERE end_time >= NOW() - INTERVAL '7 days'\n  AND failure_category IS NOT NULL\nGROUP BY failure_category\nORDER BY count DESC",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": ["percent", "name"],
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["value"] }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Top 5 Failing Nodes",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  node_hostname AS \"Node\",\n  total_jobs AS \"Total Jobs\",\n  failed_jobs AS \"Failed\",\n  ROUND((failure_rate * 100)::numeric, 1) AS \"Failure Rate %\",\n  hardware_failures AS \"HW Failures\",\n  ecc_sbe_accumulated AS \"ECC SBE\"\nFROM node_health_weekly\nWHERE week_start >= CURRENT_DATE - INTERVAL '4 weeks'\nGROUP BY node_hostname, total_jobs, failed_jobs, failure_rate, hardware_failures, ecc_sbe_accumulated\nORDER BY failed_jobs DESC\nLIMIT 5",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Failure Rate %" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green",  "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "red",    "value": 15 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [{ "displayName": "Failed", "desc": true }],
+        "footer": { "show": false }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Failures per Day + 7-Day Moving Average",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 8 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "WITH daily AS (\n  SELECT\n    date_trunc('day', end_time) AS day,\n    COUNT(*) AS failures\n  FROM job_events\n  WHERE failure_category IS NOT NULL\n    AND end_time >= NOW() - INTERVAL '30 days'\n  GROUP BY 1\n)\nSELECT\n  day AS time,\n  failures AS \"Daily Failures\",\n  ROUND(AVG(failures) OVER (\n    ORDER BY day\n    ROWS BETWEEN 6 PRECEDING AND CURRENT ROW\n  )::numeric, 1) AS \"7-Day Avg\"\nFROM daily\nORDER BY day",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "7-Day Avg" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [8, 4] } },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "transformations": [
+        { "id": "convertFieldType", "options": { "fields": [{ "destinationType": "time", "targetField": "time" }] } }
+      ]
+    }
+  ]
+}

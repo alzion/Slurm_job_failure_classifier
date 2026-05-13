@@ -1,0 +1,159 @@
+{
+  "title": "Node Reliability",
+  "uid": "node-reliability-v1",
+  "description": "Per-node failure rates, hardware failure counts, and ECC error accumulation for the most recent weekly rollup.",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "tags": ["nodes", "reliability"],
+  "editable": true,
+  "graphTooltip": 0,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Node Health Summary (Latest Week)",
+      "description": "Failure rate thresholds: green <5%, amber 5-15%, red >15%. ECC SBE > 100 is a pre-failure warning.",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 14 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  node_hostname AS \"Node\",\n  total_jobs AS \"Total Jobs\",\n  failed_jobs AS \"Failed Jobs\",\n  ROUND((failure_rate * 100)::numeric, 1) AS \"Failure Rate %\",\n  hardware_failures AS \"HW Failures\",\n  nccl_failures AS \"NCCL Failures\",\n  ecc_sbe_accumulated AS \"ECC SBE Cumulative\",\n  ROUND(avg_temperature::numeric, 1) AS \"Avg Temp °C\",\n  week_start AS \"Week Starting\"\nFROM node_health_weekly\nWHERE week_start = (\n  SELECT MAX(week_start) FROM node_health_weekly\n)\nORDER BY failure_rate DESC NULLS LAST",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Failure Rate %" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green",  "value": null },
+                    { "color": "yellow", "value": 5 },
+                    { "color": "red",    "value": 15 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "HW Failures" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green",  "value": null },
+                    { "color": "yellow", "value": 1 },
+                    { "color": "red",    "value": 3 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "ECC SBE Cumulative" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green",  "value": null },
+                    { "color": "yellow", "value": 50 },
+                    { "color": "red",    "value": 100 }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Avg Temp °C" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green",  "value": null },
+                    { "color": "yellow", "value": 78 },
+                    { "color": "red",    "value": 82 }
+                  ]
+                }
+              },
+              { "id": "unit", "value": "celsius" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Week Starting" },
+            "properties": [{ "id": "unit", "value": "dateTimeAsLocal" }]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [{ "displayName": "Failure Rate %", "desc": true }],
+        "footer": {
+          "show": true,
+          "reducer": ["sum"],
+          "fields": ["Total Jobs", "Failed Jobs", "HW Failures", "NCCL Failures"]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Failure Rate Trend by Node (4 weeks)",
+      "description": "Weekly failure rate per node. Nodes trending upward may need preemptive maintenance.",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 9 },
+      "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres-fleet" },
+          "rawSql": "SELECT\n  week_start AS time,\n  node_hostname AS node,\n  ROUND((failure_rate * 100)::numeric, 1) AS failure_rate_pct\nFROM node_health_weekly\nWHERE week_start >= CURRENT_DATE - INTERVAL '4 weeks'\nORDER BY week_start",
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "lineWidth": 2, "showPoints": "auto" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red",    "value": 15 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] }
+      },
+      "transformations": [
+        { "id": "convertFieldType", "options": { "fields": [{ "destinationType": "time", "targetField": "time" }] } },
+        { "id": "groupingToMatrix", "options": { "columnField": "node", "rowField": "time", "valueField": "failure_rate_pct" } }
+      ]
+    }
+  ]
+}

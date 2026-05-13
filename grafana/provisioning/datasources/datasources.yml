@@ -1,0 +1,30 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    uid: postgres-fleet
+    type: postgres
+    url: postgres:5432
+    user: fleet
+    secureJsonData:
+      password: fleet123
+    jsonData:
+      database: fleetdb
+      sslmode: disable
+      maxOpenConns: 10
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1600
+      timescaledb: false
+    isDefault: false
+    editable: false
+
+  - name: Prometheus
+    uid: prometheus-fleet
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      prometheusType: Prometheus
+    editable: false

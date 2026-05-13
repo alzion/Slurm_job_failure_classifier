@@ -1,0 +1,19 @@
+# Simulator output — runtime data, not source
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Docker volumes (local only)
+postgres_data/
+
+# Editor
+.vscode/
+.idea/
+*.swp
