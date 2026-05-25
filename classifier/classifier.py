@@ -60,6 +60,7 @@ PRIORITY = [
     'PREEMPTION',
     'TIMEOUT',
     'USER_ERROR',
+    'UNKNOWN',   # lowest priority: used when no pattern matches and no thermal signal
 ]
 
 
@@ -206,14 +207,18 @@ def classify(job: SacctJob, evidence: list[LogEvidence]) -> tuple[str, str, list
 
     best = _best_category(candidates)
 
-    # FAILED with no distinguishing log patterns → check thermal, else USER_ERROR
+    # FAILED with no distinguishing log patterns → check thermal, else UNKNOWN.
+    # NOTE: do NOT fall back to USER_ERROR here. On a real cluster the majority
+    # of unclassified FAILED jobs are infrastructure issues, not user mistakes.
+    # Returning USER_ERROR for unclassified failures would mislead on-call into
+    # blaming researchers for infra problems and suppress further investigation.
     if job.state == 'FAILED' and not log_cats:
         if _is_thermal_throttle(job):
             return ('THERMAL_THROTTLE', 'MEDIUM', [])
-        return ('USER_ERROR', 'LOW', [])
+        return ('UNKNOWN', 'LOW', [])
 
     if best is None:
-        return ('USER_ERROR', 'LOW', patterns)
+        return ('UNKNOWN', 'LOW', patterns)
 
     # Confidence: HIGH if log evidence agrees with state hint or log is the sole signal
     if log_cats and (state_hint is None or best in log_cats):
