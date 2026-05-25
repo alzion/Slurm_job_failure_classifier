@@ -25,12 +25,12 @@ services:
   pushgateway:
     image: prom/pushgateway:latest
     ports:
-      - "9091:9091"
+      - "127.0.0.1:9091:9091"
 
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus:/etc/prometheus
     depends_on:
@@ -44,7 +44,7 @@ services:
       POSTGRES_USER: fleet
       POSTGRES_PASSWORD: fleet123
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
       - postgres_data:/var/lib/postgresql/data
@@ -97,7 +97,7 @@ services:
   grafana:
     image: grafana/grafana:10.0.0
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
@@ -115,14 +115,14 @@ services:
   alertmanager:
     image: prom/alertmanager:latest
     ports:
-      - "9093:9093"
+      - "127.0.0.1:9093:9093"
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
 
   simulator-ui:
     build: ./simulator-ui
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8001:8080"   # 8001 = next free port per VPS port allocation table
     volumes:
       - ./simulator-ui/backend/scenarios:/app/scenarios:ro
     environment:
@@ -131,19 +131,5 @@ services:
     depends_on:
       - postgres
 
-  caddy:
-    image: caddy:2
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - /opt/pip:/srv/pip:ro          # serves pip.html as the root page
-    extra_hosts:
-      - "host.docker.internal:host-gateway"  # lets Caddy reach host port 8000 (Pip FastAPI)
-
-
 volumes:
   postgres_data:
-  caddy_data:
