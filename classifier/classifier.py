@@ -286,8 +286,15 @@ def upsert_job(conn, job: SacctJob, category: Optional[str],
 # Main loop
 # ---------------------------------------------------------------------------
 
+_INSERT_RUN_SQL = """
+INSERT INTO classifier_runs (run_at, jobs_written, jobs_skipped, errors, duration_ms)
+VALUES (NOW(), %(jobs_written)s, %(jobs_skipped)s, %(errors)s, %(duration_ms)s);
+"""
+
+
 def run_once() -> dict:
     log.info('Classifier run starting')
+    t_start  = time.monotonic()
     evidence = parse_logs(LOG_DIR)
     jobs     = parse_sacct(SACCT_PATH)
     log.info(f'  {len(evidence)} log evidence records, {len(jobs)} sacct jobs')
@@ -313,6 +320,21 @@ def run_once() -> dict:
                 log.warning(f'  DB error for {job.job_id}: {exc}')
                 conn.rollback()
                 results['errors'] += 1
+
+        # Persist run summary to classifier_runs table
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(_INSERT_RUN_SQL, {
+                    'jobs_written': results['written'],
+                    'jobs_skipped': results['skipped'],
+                    'errors':       results['errors'],
+                    'duration_ms':  duration_ms,
+                })
+            conn.commit()
+        except Exception as exc:
+            log.warning(f'  Failed to write classifier_runs row: {exc}')
+            conn.rollback()
     finally:
         conn.close()
 

@@ -45,3 +45,15 @@ CREATE TABLE node_health_weekly (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(node_hostname, week_start)
 );
+
+-- Classifier run history. Persists each run_once() outcome independently
+-- of Prometheus retention, enabling a Grafana panel for run history and
+-- gap detection without relying on metrics availability.
+CREATE TABLE classifier_runs (
+  id           SERIAL PRIMARY KEY,
+  run_at       TIMESTAMPTZ DEFAULT NOW(),
+  jobs_written INTEGER     NOT NULL DEFAULT 0,
+  jobs_skipped INTEGER     NOT NULL DEFAULT 0,
+  errors       INTEGER     NOT NULL DEFAULT 0,
+  duration_ms  INTEGER
+);
