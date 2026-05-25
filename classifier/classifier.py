@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 LOG_DIR       = os.environ.get('LOG_DIR',        '/logs')
 SACCT_PATH    = os.environ.get('SACCT_PATH',     '/logs/sacct_data.json')
 PROMETHEUS    = os.environ.get('PROMETHEUS_URL', 'http://prometheus:9090')
+PUSHGATEWAY   = os.environ.get('PUSHGATEWAY_URL', 'http://pushgateway:9091')
 DB_HOST       = os.environ.get('POSTGRES_HOST',  'postgres')
 DB_PORT       = int(os.environ.get('POSTGRES_PORT', '5432'))
 DB_NAME       = os.environ.get('POSTGRES_DB',    'fleetdb')
@@ -319,12 +320,64 @@ def run_once() -> dict:
     return results
 
 
+# ---------------------------------------------------------------------------
+# Classifier health metrics (Prometheus pushgateway)
+# ---------------------------------------------------------------------------
+
+# Cumulative counters — kept in process memory across runs.
+_runs_total       = 0
+_errors_total     = 0
+_classified_total = 0
+
+
+def _push_metrics(results: dict) -> None:
+    """
+    Push classifier health metrics to the Prometheus pushgateway.
+    Uses the text exposition format so there are no additional dependencies.
+    Fails silently — a metrics push failure must not abort a classifier run.
+    """
+    global _runs_total, _errors_total, _classified_total
+
+    _runs_total       += 1
+    _errors_total     += results.get('errors', 0)
+    _classified_total += results.get('written', 0)
+
+    now_ts = time.time()
+
+    payload = (
+        f'# HELP classifier_runs_total Total classifier run attempts\n'
+        f'# TYPE classifier_runs_total counter\n'
+        f'classifier_runs_total {_runs_total}\n'
+        f'# HELP classifier_errors_total Total runs that raised an exception\n'
+        f'# TYPE classifier_errors_total counter\n'
+        f'classifier_errors_total {_errors_total}\n'
+        f'# HELP classifier_jobs_classified_total Total jobs written to job_events\n'
+        f'# TYPE classifier_jobs_classified_total counter\n'
+        f'classifier_jobs_classified_total {_classified_total}\n'
+        f'# HELP classifier_last_run_timestamp Unix epoch of last successful run\n'
+        f'# TYPE classifier_last_run_timestamp gauge\n'
+        f'classifier_last_run_timestamp {now_ts}\n'
+    )
+
+    try:
+        url = f'{PUSHGATEWAY}/metrics/job/classifier'
+        resp = requests.post(url, data=payload, timeout=5)
+        resp.raise_for_status()
+        log.debug(f'Metrics pushed to pushgateway: runs={_runs_total} errors={_errors_total}')
+    except Exception as exc:
+        log.warning(f'Failed to push metrics to pushgateway: {exc}')
+
+
 def main() -> None:
     while True:
+        results: dict = {'written': 0, 'skipped': 0, 'errors': 0}
         try:
-            run_once()
+            results = run_once()
         except Exception as exc:
             log.error(f'Classifier run failed: {exc}')
+            results['errors'] += 1
+        finally:
+            _push_metrics(results)
         time.sleep(RUN_INTERVAL)
 
 

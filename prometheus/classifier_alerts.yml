@@ -1,0 +1,14 @@
+groups:
+  - name: classifier_health
+    rules:
+      - alert: ClassifierNotRunning
+        expr: time() - classifier_last_run_timestamp > 1800
+        for: 0m
+        labels:
+          severity: P2
+        annotations:
+          summary: "Classifier has not run in 30 minutes"
+          description: >
+            The failure classifier last ran {{ humanizeDuration (time() - classifier_last_run_timestamp) }} ago.
+            Grafana dashboards are showing stale data. Check the classifier container logs.
+            Expected run interval: 15 minutes.
