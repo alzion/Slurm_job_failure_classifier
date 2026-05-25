@@ -1,16 +1,35 @@
-:80 {
-    handle /grafana/* {
+piptutor.duckdns.org {
+
+    # ── Slurm GPU Fleet Classifier ──────────────────────────────────────
+    handle /grafana* {
         reverse_proxy grafana:3000
     }
-    handle /prometheus/* {
+    handle /sim* {
+        uri strip_prefix /sim
+        reverse_proxy simulator-ui:8080
+    }
+    handle /prometheus* {
         uri strip_prefix /prometheus
         reverse_proxy prometheus:9090
     }
-    handle /alertmanager/* {
+    handle /alertmanager* {
         uri strip_prefix /alertmanager
         reverse_proxy alertmanager:9093
     }
+
+    # ── Pip AI Tutor (FastAPI systemd service on host port 8000) ────────
+    # API routes — proxy to host
+    handle /chat*        { reverse_proxy host.docker.internal:8000 }
+    handle /tts*         { reverse_proxy host.docker.internal:8000 }
+    handle /health*      { reverse_proxy host.docker.internal:8000 }
+    handle /ingest*      { reverse_proxy host.docker.internal:8000 }
+    handle /session*     { reverse_proxy host.docker.internal:8000 }
+    handle /metrics*     { reverse_proxy host.docker.internal:8000 }
+
+    # Root — serve pip.html as the landing page
     handle {
-        reverse_proxy simulator-ui:8080
+        root * /srv/pip
+        try_files {path} /pip.html
+        file_server
     }
 }

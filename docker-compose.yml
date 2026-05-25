@@ -139,6 +139,9 @@ services:
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
+      - /opt/pip:/srv/pip:ro          # serves pip.html as the root page
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets Caddy reach host port 8000 (Pip FastAPI)
 
 
 volumes:
