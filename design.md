@@ -1,4 +1,21 @@
-# GPU Fleet Failure Classifier — Master Project Spec
+# GPU Fleet Failure Classifier — Design Document
+
+## Background
+
+GPU cluster on-call engineers today diagnose job failures by reading raw Slurm logs and sacct records manually. This takes 20–40 minutes per incident and requires expertise most rotation members don't have uniformly. Pre-failure GPU health signals — rising ECC single-bit error rates, NVLink CRC increments, thermal excursions — are already present in DCGM/Prometheus data 60–90 minutes before failure, but go unread until after the job dies. The business case and program goals are in `docs/PRD.md`. This document covers how the system is built and why specific design decisions were made.
+
+## Goals
+
+- Surface failure root cause automatically within 20 minutes of a job ending, without requiring an engineer to read logs.
+- Correlate failures against pre-failure DCGM signals and compute lead times, enabling proactive intervention in Phase 2+.
+- Provide structured, queryable failure data for capacity planning and hardware refresh workflows.
+
+## Non-Goals
+
+- **Not real-time alerting.** This system classifies completed or failing jobs. Real-time alerting is AlertManager's responsibility; this system feeds it, not replaces it.
+- **Not automated remediation in Phase 1.** Phase 1 is information-only. Automated node cordoning is Phase 2, gated on stakeholder approval (see `docs/roadmap.md`).
+
+---
 
 ## What This Is
 A Dockerized system that ingests simulated Slurm job failure logs and DCGM GPU health metrics,
@@ -356,3 +373,52 @@ P4: automated notification only, no ops SLA.
 Sections: Incident ID | Severity | Impact | Timeline with exact timestamps from S01 |
 Root cause | Contributing factors | 5 Whys | Action items (3 items with owner + due date) |
 What pre-failure analyzer showed (retrospective: signal detectable at T-2h31m with 2h31m lead time).
+
+---
+
+## Alternatives Considered
+
+### 1. LLM-based log classification instead of regex rules
+
+**Approach:** Send raw log lines to a language model at classification time; ask it to identify the failure category.
+
+**Why rejected:**
+- **Latency:** A classification run that queries an LLM API adds 2–5 seconds per job. At 15-minute intervals across hundreds of jobs, this compounds. On-call tools must be fast and predictable.
+- **Cost:** At ~$0.01–0.05 per classification, a busy cluster running thousands of jobs per day would generate meaningful API costs with no accuracy advantage over well-tuned regex.
+- **Non-determinism:** LLM outputs are not guaranteed to be consistent across API versions. A model upgrade could silently shift classification behavior. Regex rules are auditable, version-controlled, and deterministic.
+- **Offline requirement:** Classifiers may run in air-gapped or restricted-network environments (some GPU clusters have no internet egress). Regex rules have no external dependency.
+
+**If reconsidered:** LLM classification is worth revisiting for the `UNKNOWN` category only — using it as a second-pass on unclassified failures to identify novel failure modes and suggest new rules. This keeps the hot path deterministic while using LLM for exploratory analysis.
+
+---
+
+### 2. Classify using only sacct state fields, without log parsing
+
+**Approach:** Use `sacct` state (`NODE_FAIL`, `OUT_OF_MEMORY`, `FAILED`, `TIMEOUT`, etc.) as the sole classification signal. No log parsing.
+
+**Why rejected:**
+- **sacct state is too coarse.** The `FAILED` state covers NCCL communication failures, Lustre/NFS storage errors, user code errors, and DCGM-silent GPU issues — all mapped to the same string. Log parsing is what distinguishes these cases.
+- **`NODE_FAIL` is the only reliably specific state.** It maps cleanly to `GPU_HARDWARE`. Everything else requires log evidence or DCGM correlation to classify correctly.
+- **Thermal throttle is invisible to sacct.** A job that fails due to thermal throttling shows `FAILED` in sacct with no distinguishing signal. DCGM correlation is the only detection path.
+
+**What was kept from this approach:** sacct state is used as a *hint* (first pass), not the sole signal. State hints (`NODE_FAIL → GPU_HARDWARE`, `OUT_OF_MEMORY → CUDA_OOM`) seed the candidate list; log evidence and DCGM data refine it.
+
+---
+
+## Open Questions
+
+| # | Question | Proposed Resolution | Decision Owner | Due |
+|---|----------|---------------------|----------------|-----|
+| OQ-D1 | Should the classifier own the alerting path (write directly to AlertManager API), or should it write failure events to a queue that AlertManager consumes via a webhook receiver? | Classifier writes to PostgreSQL only; a separate Prometheus recording rule or Grafana alert queries the DB and fires through AlertManager. This keeps the classifier stateless with respect to alerting and makes alert routing changes independent of classifier deployments. | Infra Lead | Phase 1 design review |
+| OQ-D2 | At what log volume does the current full-file re-parse approach need to be replaced with offset tracking or log streaming? | Current approach re-reads full log files every 15 minutes. At ~10 MB/day (estimated for a 10-node cluster), this is acceptable. At ~100 MB/day (100-node cluster, high failure rate), re-parse latency may exceed the 15-minute interval. Switch to offset-based incremental parsing when log growth rate exceeds 50 MB/day. | Infra | Phase 2 capacity review |
+| OQ-D3 | Who defines the per-GPU-SKU thermal threshold table? The current threshold (> 82°C) is calibrated for A100-SXM4-80GB. H100 and other SKUs have different TDP and throttle onset temperatures. | Hardware Reliability team owns the threshold table, versioned in `classifier/thermal_thresholds.json` (to be created). Infra consumes it. | HW Reliability + Infra | Phase 2 M2.1 |
+
+---
+
+## Future Work
+
+The following items are explicitly deferred to Phase 2 or Phase 3. They are noted here so the design record reflects what was considered and not just what was built.
+
+- **Automated node cordon on ECC_SBE threshold** (Phase 2 M2.1): The classifier already detects the ECC_SBE rate signal. Triggering an automated `scontrol drain` requires stakeholder approval and a false-positive rate of zero over a 30-day window. See `docs/roadmap.md`.
+- **Pre-failure alerting with lead-time guarantee** (Phase 3 M3.1): Alert on active pre-failure signals while a job is still running. Requires the correlation engine to run in near-real-time (currently runs post-failure) and a Prometheus recording rule to evaluate signal thresholds on live metrics.
+- **Per-SKU thermal threshold table** (Phase 2+): See OQ-D3 above. Required before expanding to H100 or other non-A100 nodes.
