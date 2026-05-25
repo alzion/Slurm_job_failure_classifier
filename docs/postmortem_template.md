@@ -2,9 +2,9 @@
 
 | Field | Value |
 |-------|-------|
-| **Incident ID** | INC-2024-0315-001 |
+| **Incident ID** | INC-2026-0315-001 |
 | **Severity** | P1 |
-| **Date** | 2024-03-15 |
+| **Date** | 2026-03-15 |
 | **Duration** | 2h 24m (14:23 → 16:47) |
 | **Job** | 847293 — llama3-70b-finetune |
 | **Nodes affected** | gpu03 (primary), gpu03-10 (job allocation) |
@@ -45,9 +45,9 @@ GPU0 on gpu03 developed progressive ECC single-bit errors beginning ~90 minutes 
 
 | # | Action | Owner | Due |
 |---|--------|-------|-----|
-| 1 | Add Prometheus alert rule: drain node automatically when ECC_SBE rate > 30/hr for 5 min | Infra | 2024-03-22 |
-| 2 | Require checkpoint save every 30 min for jobs > 4 GPU-hours | MLPlatform | 2024-03-29 |
-| 3 | Upgrade ECC_SBE sustained alert from P3 → P2 in AlertManager config | On-call lead | 2024-03-19 |
+| 1 | Add Prometheus alert rule: drain node automatically when ECC_SBE rate > 30/hr for 5 min | Infra | 2026-03-22 |
+| 2 | Require checkpoint save every 30 min for jobs > 4 GPU-hours | MLPlatform | 2026-03-29 |
+| 3 | Upgrade ECC_SBE sustained alert from P3 → P2 in AlertManager config | On-call lead | 2026-03-19 |
 
 ## What the Pre-Failure Analyzer Showed (Retrospective)
 The signal was detectable at **T−90m** (13:53) when `DCGM_FI_DEV_ECC_SBE_VOL_TOTAL` on gpu03/GPU0 first crossed 30/hr. Had an automated cordon been triggered at that point, the job could have been checkpointed and migrated with **0 GPU-hours lost** instead of 19.3. Lead time available: **5,400 seconds (1h 30m)**.
