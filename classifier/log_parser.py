@@ -377,6 +377,28 @@ class LogEvidence:
 
 
 # ---------------------------------------------------------------------------
+# Per-file read-position state
+#
+# Maps absolute path → (inode, byte_offset).
+# The classifier is a long-running process; this dict persists across
+# parse_logs() calls so each call reads only the bytes written since the
+# last call, rather than re-scanning the entire file.
+#
+# Rotation detection: if the file's current inode differs from the stored
+# inode, the log was rotated and we start from byte 0 of the new file.
+# Truncation guard: if the stored offset exceeds the current file size
+# (truncate-and-reuse rather than rename-and-recreate), we also reset to 0.
+# ---------------------------------------------------------------------------
+
+_file_state: dict[str, tuple[int, int]] = {}  # abs_path → (inode, offset)
+
+
+def _reset_file_state() -> None:
+    """Clear all tracked file positions. Called between test cases."""
+    _file_state.clear()
+
+
+# ---------------------------------------------------------------------------
 # File parsers
 # ---------------------------------------------------------------------------
 
@@ -385,9 +407,23 @@ def _parse_file(path: Path) -> list[LogEvidence]:
     if not path.exists():
         return evidence
 
-    with open(path, errors='replace') as f:
+    abs_path = str(path.resolve())
+    stat     = path.stat()
+
+    stored_inode, stored_offset = _file_state.get(abs_path, (None, 0))
+
+    if stored_inode is not None and stored_inode == stat.st_ino:
+        # Same file — resume from last position, but guard against truncation.
+        start_offset = stored_offset if stored_offset <= stat.st_size else 0
+    else:
+        # First read, or the file was rotated (new inode) — start from scratch.
+        start_offset = 0
+
+    # Binary mode: seek/tell are unambiguous byte offsets on all platforms.
+    with open(path, 'rb') as f:
+        f.seek(start_offset)
         for raw in f:
-            line = raw.rstrip()
+            line = raw.decode('utf-8', errors='replace').rstrip()
             ts, body = _split_line(line)
             if ts is None:
                 continue
@@ -407,6 +443,8 @@ def _parse_file(path: Path) -> list[LogEvidence]:
                     detail        = extras.get('detail'),
                 ))
                 break  # first matching rule wins per line
+
+        _file_state[abs_path] = (stat.st_ino, f.tell())
 
     return evidence
 
@@ -433,6 +471,11 @@ _SUPPLEMENTARY_LOGS = [
 def parse_logs(log_dir: str) -> list[LogEvidence]:
     """
     Parse all known log files in log_dir.
+
+    Incremental: on repeated calls within the same process, only bytes
+    written since the last call are parsed. File rotation is detected by
+    inode comparison; a new inode triggers a full re-read from offset 0.
+
     Returns list of LogEvidence sorted by timestamp.
     """
     base = Path(log_dir)
