@@ -1,0 +1,50 @@
+# Production overlay for real GPU clusters.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this overlay does:
+#   - Disables all three simulators (they have the "simulator" profile, so
+#     they are already excluded unless --profile simulator is passed; this
+#     overlay makes the intent explicit).
+#   - Switches the classifier to hook mode (single-shot per job, triggered
+#     by the Slurm epilog script in epilog_hook.sh).
+#   - Sets SACCT_FORMAT=real so the classifier reads native sacct --json output.
+#   - Makes DCGM_HOSTNAME_LABEL configurable (set in .env).
+#   - Replaces the ./logs bind-mount with a path to your real cluster's
+#     shared log directory (set LOG_MOUNT in .env or override here).
+#
+# Before first run:
+#   1. Copy .env.example to .env and fill in values.
+#   2. Ensure LOG_MOUNT points to a directory readable by the classifier
+#      that contains slurmctld.log, slurmd.log, and sacct_data.json.
+#   3. Set up the epilog hook: copy epilog_hook.sh to
+#      /etc/slurm/epilog.d/ on your Slurm controller and make it executable.
+
+services:
+
+  classifier:
+    volumes:
+      - ${LOG_MOUNT:-/var/log/slurm}:/logs:ro
+    environment:
+      CLASSIFIER_MODE:  hook
+      SACCT_FORMAT:     real
+      SACCT_PATH:       /logs/sacct_data.json
+      LOG_DIR:          /logs
+
+  node-health-rollup:
+    environment:
+      PROMETHEUS_URL: ${REAL_PROMETHEUS_URL:-http://prometheus:9090}
+
+  correlation-engine:
+    environment:
+      PROMETHEUS_URL:      ${REAL_PROMETHEUS_URL:-http://prometheus:9090}
+      DCGM_HOSTNAME_LABEL: ${DCGM_HOSTNAME_LABEL:-hostname}
+
+  override-api:
+    volumes:
+      - ${LOG_MOUNT:-/var/log/slurm}:/logs:ro
+    environment:
+      SACCT_FORMAT: real
+      SACCT_PATH:   /logs/sacct_data.json
+      LOG_DIR:      /logs

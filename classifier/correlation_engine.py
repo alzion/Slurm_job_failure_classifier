@@ -19,8 +19,9 @@ import requests
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
-PROMETHEUS   = os.environ.get('PROMETHEUS_URL',    'http://prometheus:9090')
-DB_HOST      = os.environ.get('POSTGRES_HOST',     'postgres')
+PROMETHEUS          = os.environ.get('PROMETHEUS_URL',        'http://prometheus:9090')
+DCGM_HOSTNAME_LABEL = os.environ.get('DCGM_HOSTNAME_LABEL',   'hostname')
+DB_HOST             = os.environ.get('POSTGRES_HOST',          'postgres')
 DB_PORT      = int(os.environ.get('POSTGRES_PORT', '5432'))
 DB_NAME      = os.environ.get('POSTGRES_DB',       'fleetdb')
 DB_USER      = os.environ.get('POSTGRES_USER',     'fleet')
@@ -141,7 +142,7 @@ def check_signals(
     results = []
     for node in nodes:
         for metric, rule_type, threshold, direction in SIGNAL_RULES:
-            query      = f'{metric}{{hostname="{node}"}}'
+            query      = f'{metric}{{{DCGM_HOSTNAME_LABEL}="{node}"}}'
             raw_series = _prom_range(prom_url, query, start_ts, end_ts)
             if not raw_series:
                 continue

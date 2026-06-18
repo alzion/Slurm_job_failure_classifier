@@ -1,5 +1,12 @@
 services:
+
+  # ---------------------------------------------------------------------------
+  # Simulators — only active in simulator mode.
+  # Start with: docker compose --profile simulator up -d
+  # ---------------------------------------------------------------------------
+
   slurm-simulator:
+    profiles: ["simulator"]
     build: .
     command: python simulator/slurm_log_sim.py
     volumes:
@@ -7,6 +14,7 @@ services:
     restart: unless-stopped
 
   sacct-simulator:
+    profiles: ["simulator"]
     build: .
     command: python simulator/sacct_sim.py
     volumes:
@@ -14,6 +22,7 @@ services:
     restart: unless-stopped
 
   dcgm-simulator:
+    profiles: ["simulator"]
     build: .
     command: python simulator/dcgm_sim.py
     environment:
@@ -21,6 +30,10 @@ services:
     depends_on:
       - pushgateway
     restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
 
   pushgateway:
     image: prom/pushgateway:latest
@@ -40,59 +53,14 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: fleetdb
-      POSTGRES_USER: fleet
-      POSTGRES_PASSWORD: fleet123
+      POSTGRES_DB:       ${POSTGRES_DB:-fleetdb}
+      POSTGRES_USER:     ${POSTGRES_USER:-fleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet123}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
       - postgres_data:/var/lib/postgresql/data
-
-  classifier:
-    build: .
-    command: python -m classifier.classifier
-    volumes:
-      - ./logs:/logs:ro
-    environment:
-      POSTGRES_DB: fleetdb
-      POSTGRES_USER: fleet
-      POSTGRES_PASSWORD: fleet123
-      POSTGRES_HOST: postgres
-      PROMETHEUS_URL: http://prometheus:9090
-    depends_on:
-      - postgres
-      - prometheus
-    restart: unless-stopped
-
-  node-health-rollup:
-    build: .
-    command: python -m classifier.node_health_rollup
-    environment:
-      POSTGRES_DB: fleetdb
-      POSTGRES_USER: fleet
-      POSTGRES_PASSWORD: fleet123
-      POSTGRES_HOST: postgres
-      PROMETHEUS_URL: http://prometheus:9090
-      ROLLUP_INTERVAL: "3600"
-    depends_on:
-      - postgres
-      - prometheus
-    restart: unless-stopped
-
-  correlation-engine:
-    build: .
-    command: python -m classifier.correlation_engine
-    environment:
-      POSTGRES_DB: fleetdb
-      POSTGRES_USER: fleet
-      POSTGRES_PASSWORD: fleet123
-      POSTGRES_HOST: postgres
-      PROMETHEUS_URL: http://prometheus:9090
-    depends_on:
-      - postgres
-      - prometheus
-    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:10.0.0
@@ -102,11 +70,11 @@ services:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_SECURITY_ADMIN_PASSWORD:  ${GF_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED:   "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE:  "Viewer"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
-      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana"
+      GF_SERVER_ROOT_URL:          "%(protocol)s://%(domain)s/grafana"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     depends_on:
       - postgres
@@ -119,15 +87,95 @@ services:
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
 
+  # ---------------------------------------------------------------------------
+  # Classifier stack
+  # ---------------------------------------------------------------------------
+
+  classifier:
+    build: .
+    command: python -m classifier.classifier
+    volumes:
+      - ./logs:/logs:ro
+    environment:
+      CLASSIFIER_MODE:   ${CLASSIFIER_MODE:-poll}
+      SACCT_FORMAT:      ${SACCT_FORMAT:-auto}
+      LOG_DIR:           /logs
+      SACCT_PATH:        /logs/sacct_data.json
+      POSTGRES_DB:       ${POSTGRES_DB:-fleetdb}
+      POSTGRES_USER:     ${POSTGRES_USER:-fleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet123}
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     5432
+      PROMETHEUS_URL:    http://prometheus:9090
+      PUSHGATEWAY_URL:   http://pushgateway:9091
+      RUN_INTERVAL:      ${RUN_INTERVAL:-900}
+    depends_on:
+      - postgres
+      - prometheus
+    restart: unless-stopped
+
+  node-health-rollup:
+    build: .
+    command: python -m classifier.node_health_rollup
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-fleetdb}
+      POSTGRES_USER:     ${POSTGRES_USER:-fleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet123}
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     5432
+      PROMETHEUS_URL:    http://prometheus:9090
+      ROLLUP_INTERVAL:   "3600"
+    depends_on:
+      - postgres
+      - prometheus
+    restart: unless-stopped
+
+  correlation-engine:
+    build: .
+    command: python -m classifier.correlation_engine
+    environment:
+      POSTGRES_DB:          ${POSTGRES_DB:-fleetdb}
+      POSTGRES_USER:        ${POSTGRES_USER:-fleet}
+      POSTGRES_PASSWORD:    ${POSTGRES_PASSWORD:-fleet123}
+      POSTGRES_HOST:        postgres
+      POSTGRES_PORT:        5432
+      PROMETHEUS_URL:       http://prometheus:9090
+      DCGM_HOSTNAME_LABEL:  ${DCGM_HOSTNAME_LABEL:-hostname}
+    depends_on:
+      - postgres
+      - prometheus
+    restart: unless-stopped
+
+  override-api:
+    build: .
+    command: python -m classifier.override_api
+    ports:
+      - "127.0.0.1:8002:8002"
+    volumes:
+      - ./logs:/logs:ro
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-fleetdb}
+      POSTGRES_USER:     ${POSTGRES_USER:-fleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet123}
+      POSTGRES_HOST:     postgres
+      POSTGRES_PORT:     5432
+      LOG_DIR:           /logs
+      SACCT_PATH:        /logs/sacct_data.json
+      SACCT_FORMAT:      ${SACCT_FORMAT:-auto}
+      OVERRIDE_API_PORT: 8002
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
   simulator-ui:
     build: ./simulator-ui
     ports:
-      - "127.0.0.1:8001:8080"   # 8001 = next free port per VPS port allocation table
+      - "127.0.0.1:8001:8080"
     volumes:
       - ./simulator-ui/backend/scenarios:/app/scenarios:ro
     environment:
-      - SCENARIO_DIR=/app/scenarios
-      - DATABASE_URL=postgresql://fleet:fleet123@postgres:5432/fleetdb
+      SCENARIO_DIR:  /app/scenarios
+      DATABASE_URL:  postgresql://${POSTGRES_USER:-fleet}:${POSTGRES_PASSWORD:-fleet123}@postgres:5432/${POSTGRES_DB:-fleetdb}
     depends_on:
       - postgres
 
