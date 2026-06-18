@@ -1,5 +1,7 @@
 # GPU Fleet Failure Classifier
 
+[![Tests](https://github.com/alzion/Slurm_job_failure_classifier/actions/workflows/tests.yml/badge.svg)](https://github.com/alzion/Slurm_job_failure_classifier/actions/workflows/tests.yml)
+
 Automatically classifies Slurm job failures by root cause and surfaces pre-failure GPU health signals up to 90 minutes before a job dies.
 
 On a 64-GPU cluster running LLM training jobs at ~$100/hour, manual triage takes 20–40 minutes and requires deep familiarity with Slurm, CUDA, and NCCL internals. This system reduces P1 incident MTTR to under 10 minutes by correlating log patterns, `sacct` records, and DCGM time series into a single verdict with evidence — no real GPU cluster required.
