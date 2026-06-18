@@ -482,9 +482,12 @@ class TestIncrementalReads:
             ev1 = parse_logs(d)
             assert len(ev1) == 1
 
-            # Simulate rotation: delete old file, create new one with different content.
-            # The new file gets a new inode.
-            log.unlink()
+            # Simulate rotation the way logrotate does it: rename the active log
+            # (it keeps its inode) then create a fresh file at the original path.
+            # This guarantees a different inode because the old inode is still held
+            # by slurmctld.log.1, so the OS cannot recycle it for the new file.
+            # Using unlink()+create instead risks inode reuse on Linux.
+            log.rename(Path(d) / 'slurmctld.log.1')
             log.write_text(_slurm('CUDA out of memory') + '\n')
 
             ev2 = parse_logs(d)
