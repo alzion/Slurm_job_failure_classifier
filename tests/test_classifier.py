@@ -262,6 +262,29 @@ class TestClassify:
         assert cat == 'GPU_HARDWARE'
         assert conf == 'HIGH'
 
+    # — NCCL_NETWORK_HARDWARE —
+
+    def test_nccl_network_hardware_from_log(self):
+        job = _job(state='FAILED')
+        ev  = _evidence('NCCL_NETWORK_HARDWARE')
+        cat, conf, _ = classify(job, [ev])
+        assert cat == 'NCCL_NETWORK_HARDWARE'
+        assert conf == 'HIGH'
+
+    def test_nccl_network_hardware_beats_nccl_comm_failure(self):
+        job  = _job(state='FAILED')
+        ev_h = _evidence('NCCL_NETWORK_HARDWARE')
+        ev_s = _evidence('NCCL_COMM_FAILURE')
+        cat, _, _ = classify(job, [ev_h, ev_s])
+        assert cat == 'NCCL_NETWORK_HARDWARE'
+
+    def test_gpu_hardware_beats_nccl_network_hardware(self):
+        job  = _job(state='FAILED')
+        ev_g = _evidence('GPU_HARDWARE')
+        ev_n = _evidence('NCCL_NETWORK_HARDWARE')
+        cat, _, _ = classify(job, [ev_g, ev_n])
+        assert cat == 'GPU_HARDWARE'
+
     # — NCCL_COMM_FAILURE —
 
     def test_nccl_from_log(self):

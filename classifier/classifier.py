@@ -65,6 +65,7 @@ STATE_HINTS: dict[str, str] = {
 # Category priority order (index = priority, lower = higher priority)
 PRIORITY = [
     'GPU_HARDWARE',
+    'NCCL_NETWORK_HARDWARE',
     'NCCL_COMM_FAILURE',
     'CUDA_OOM',
     'THERMAL_THROTTLE',

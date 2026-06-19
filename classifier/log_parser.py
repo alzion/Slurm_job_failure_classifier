@@ -170,11 +170,27 @@ _RULES: list[tuple[re.Pattern, str, callable]] = [
         'NCCL_COMM_FAILURE',
         lambda m, _: {},
     ),
-    # NVLink CRC / flit errors (DCGM daemon log or kernel messages)
+    # ==== NCCL_NETWORK_HARDWARE ====
+    # Physical interconnect failures — NVLink CRC/flit errors and fabric manager
+    # crashes require hardware inspection and node drain, not a config fix.
+
+    # NVLink CRC / flit errors (DCGM daemon log, kernel messages, nvidia-smi output)
     (
         re.compile(r'nvlink.*?(?:crc|flit).*?error|NVLink.*?error', re.IGNORECASE),
-        'NCCL_COMM_FAILURE',
+        'NCCL_NETWORK_HARDWARE',
         lambda m, _: {'detail': 'NVLINK_CRC'},
+    ),
+    # NVSwitch errors
+    (
+        re.compile(r'NVSwitch.*?error|nvswitch.*?fail', re.IGNORECASE),
+        'NCCL_NETWORK_HARDWARE',
+        lambda m, _: {'detail': 'NVSWITCH'},
+    ),
+    # NVIDIA fabric manager crash (manages NVLink/NVSwitch topology)
+    (
+        re.compile(r'nvidia-fabricmanager.*?(?:died|crash|fail|error)', re.IGNORECASE),
+        'NCCL_NETWORK_HARDWARE',
+        lambda m, _: {'detail': 'FABRIC_MGR'},
     ),
     # NCCL generic WARN/error line (catch-all after specific patterns)
     (

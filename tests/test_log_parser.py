@@ -196,7 +196,7 @@ class TestNcclPatterns:
 
     def test_nvlink_crc_error(self):
         e = first(_iso('nvlink crc flit error on GPU 0 link 3'))
-        assert e.category_hint == 'NCCL_COMM_FAILURE'
+        assert e.category_hint == 'NCCL_NETWORK_HARDWARE'
         assert e.detail == 'NVLINK_CRC'
 
     def test_mpi_allreduce_fatal(self):
@@ -210,6 +210,43 @@ class TestNcclPatterns:
 
     def test_nccl_internal_error(self):
         e = first(_slurm('ncclInternalError: unexpected state'))
+        assert e.category_hint == 'NCCL_COMM_FAILURE'
+
+
+# ===========================================================================
+# NCCL_NETWORK_HARDWARE patterns
+# (physical interconnect — drain node, file hardware ticket)
+# ===========================================================================
+
+class TestNcclNetworkHardwarePatterns:
+
+    def test_nvlink_crc_flit_error(self):
+        e = first(_iso('nvlink crc flit error on GPU 0 link 3'))
+        assert e.category_hint == 'NCCL_NETWORK_HARDWARE'
+        assert e.detail == 'NVLINK_CRC'
+
+    def test_nvlink_generic_error(self):
+        e = first(_slurm('NVLink error detected on device 0'))
+        assert e.category_hint == 'NCCL_NETWORK_HARDWARE'
+
+    def test_nvswitch_error(self):
+        e = first(_iso('NVSwitch error: fabric timeout on port 4'))
+        assert e.category_hint == 'NCCL_NETWORK_HARDWARE'
+        assert e.detail == 'NVSWITCH'
+
+    def test_fabric_manager_crash(self):
+        e = first(_iso('nvidia-fabricmanager died unexpectedly'))
+        assert e.category_hint == 'NCCL_NETWORK_HARDWARE'
+        assert e.detail == 'FABRIC_MGR'
+
+    def test_fabric_manager_error(self):
+        e = first(_iso('nvidia-fabricmanager: error initialising fabric'))
+        assert e.category_hint == 'NCCL_NETWORK_HARDWARE'
+        assert e.detail == 'FABRIC_MGR'
+
+    def test_nccl_network_hardware_distinct_from_comm_failure(self):
+        # ncclSystemError (software) must NOT match NCCL_NETWORK_HARDWARE
+        e = first(_slurm('ncclSystemError on rank 3'))
         assert e.category_hint == 'NCCL_COMM_FAILURE'
 
 

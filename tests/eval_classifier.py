@@ -41,6 +41,7 @@ GROUND_TRUTH_PATH = Path(__file__).parent / "ground_truth.json"
 
 ALL_CATEGORIES = [
     "GPU_HARDWARE",
+    "NCCL_NETWORK_HARDWARE",
     "NCCL_COMM_FAILURE",
     "CUDA_OOM",
     "THERMAL_THROTTLE",

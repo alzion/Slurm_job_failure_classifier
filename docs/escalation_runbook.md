@@ -21,22 +21,45 @@ scontrol update NodeName=<node> State=drain Reason="GPU_HARDWARE detected"
 
 ---
 
-## NCCL_COMM_FAILURE
-**Trigger:** `DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL` incrementing or log `ncclSystemError`  
+## NCCL_NETWORK_HARDWARE
+**Trigger:** Log `NVLink error`, `nvlink crc flit error`, `NVSwitch error`, or `nvidia-fabricmanager` crash  
 **Severity:** P2  
 **Page:** On-call infra engineer  
 
-1. Identify affected nodes: check slurmd.log for `ncclSystemError` / `socket.cc`
-2. Check NVLink health: `nvidia-smi nvlink --status`
-3. Check fabric manager: `systemctl status nvidia-fabricmanager`
-4. Test inter-node bandwidth: run NCCL allreduce test across affected nodes
-5. Review switch logs for network fabric errors between nodes
+Physical interconnect failure. The node must be drained — requeuing on the same nodes will reproduce the failure.
+
+1. Confirm NVLink errors: `nvidia-smi nvlink --status` on affected node
+2. Check fabric manager: `systemctl status nvidia-fabricmanager`
+3. Review NVSwitch logs: `nvidia-smi nvswitch --status` (DGX/HGX systems)
+4. Drain the node before requeuing:
 
 ```bash
-scontrol update NodeName=<node> State=drain Reason="NCCL_COMM_FAILURE detected"
+scontrol update NodeName=<node> State=drain Reason="NVLink/NVSwitch hardware failure"
 ```
-**Job owner:** "Job <id> failed due to an inter-GPU communication error. Re-queue on a different node set."  
-**Escalation:** Network/fabric team if NVLink or switch issue confirmed
+**Job owner:** "Job <id> failed due to a GPU interconnect hardware failure on `<node>`. Re-queued on a different node set. Hardware team notified."  
+**Escalation:** Hardware team immediately; open NVIDIA support case if fabric manager cannot restart
+
+---
+
+## NCCL_COMM_FAILURE
+**Trigger:** Log `ncclSystemError`, `Socket: Connection timed out`, NCCL bootstrap failure, or rank timeout  
+**Severity:** P2  
+**Page:** On-call infra engineer  
+
+Software or network configuration failure. Check config before draining — the node hardware is likely fine.
+
+1. Check slurmd.log for the specific error: `socket.cc`, `bootstrap`, or `ncclSystemError`
+2. Verify `NCCL_SOCKET_IFNAME` matches the correct network interface on all nodes
+3. Check firewall rules: NCCL needs open ports between compute nodes
+4. Test inter-node bandwidth: run NCCL allreduce test across affected nodes
+5. If repeated on the same node pair, escalate to network team (possible switch/routing issue)
+
+```bash
+# Only drain if the same node fails repeatedly with different job partners
+scontrol update NodeName=<node> State=drain Reason="Repeated NCCL_COMM_FAILURE — investigation"
+```
+**Job owner:** "Job <id> failed due to an inter-GPU communication error. Re-queuing — this is often transient."  
+**Escalation:** Network team if allreduce test fails across multiple node pairs
 
 ---
 
