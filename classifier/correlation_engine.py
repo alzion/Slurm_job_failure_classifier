@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 
 PROMETHEUS          = os.environ.get('PROMETHEUS_URL',        'http://prometheus:9090')
 DCGM_HOSTNAME_LABEL = os.environ.get('DCGM_HOSTNAME_LABEL',   'hostname')
+DCGM_GPU_IDX_LABEL  = os.environ.get('DCGM_GPU_INDEX_LABEL',  'gpu')
 DB_HOST             = os.environ.get('POSTGRES_HOST',          'postgres')
 DB_PORT      = int(os.environ.get('POSTGRES_PORT', '5432'))
 DB_NAME      = os.environ.get('POSTGRES_DB',       'fleetdb')
@@ -128,6 +129,22 @@ def _first_crossing(
     return None, bl, bl, 0.0
 
 
+def _extract_gpu_index(metric_labels: dict) -> Optional[int]:
+    """
+    Extract the GPU device index from a Prometheus metric label set.
+    Tries the configured label first, then common dcgm-exporter defaults.
+    Returns None when no recognised label is present.
+    """
+    for label in (DCGM_GPU_IDX_LABEL, 'gpu', 'GPU_I_ID'):
+        val = metric_labels.get(label)
+        if val is not None:
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                continue
+    return None
+
+
 def check_signals(
     job_id: str,
     nodes: list[str],
@@ -138,6 +155,9 @@ def check_signals(
     """
     For each node × SIGNAL_RULES, query Prometheus and detect crossings.
     Returns one result dict per (node, metric) that has Prometheus data.
+    gpu_index identifies which physical GPU on the node crossed the threshold
+    first — needed by on-call engineers to run nvidia-smi -i <N> or file
+    the correct hardware ticket.
     """
     results = []
     for node in nodes:
@@ -146,9 +166,11 @@ def check_signals(
             raw_series = _prom_range(prom_url, query, start_ts, end_ts)
             if not raw_series:
                 continue
-            # There may be multiple GPU time series per node; take the first crossing
-            best_onset: Optional[float] = None
+
+            best_onset:     Optional[float] = None
+            best_gpu_index: Optional[int]   = None
             best_bl = best_peak = best_ratio = 0.0
+
             for ts_obj in raw_series:
                 pairs = [(float(t), float(v)) for t, v in ts_obj.get('values', []) if v != 'NaN']
                 if not pairs:
@@ -156,16 +178,18 @@ def check_signals(
                 onset, bl, peak, ratio = _first_crossing(pairs, rule_type, threshold, direction)
                 if onset is not None:
                     if best_onset is None or onset < best_onset:
-                        best_onset = onset
-                        best_bl    = bl
-                        best_peak  = peak
-                        best_ratio = ratio
+                        best_onset     = onset
+                        best_bl        = bl
+                        best_peak      = peak
+                        best_ratio     = ratio
+                        best_gpu_index = _extract_gpu_index(ts_obj.get('metric', {}))
 
             lead_time = int(end_ts - best_onset) if best_onset is not None else None
             results.append({
                 'job_id':             job_id,
                 'node_hostname':      node,
                 'metric_name':        metric,
+                'gpu_index':          best_gpu_index,
                 'signal_detected':    best_onset is not None,
                 'signal_onset_time':  datetime.fromtimestamp(best_onset, tz=timezone.utc) if best_onset else None,
                 'lead_time_seconds':  lead_time,
@@ -189,15 +213,16 @@ def _connect() -> psycopg2.extensions.connection:
 
 UPSERT_SQL = """
 INSERT INTO correlation_results (
-    job_id, node_hostname, metric_name, signal_detected,
+    job_id, node_hostname, metric_name, gpu_index, signal_detected,
     signal_onset_time, lead_time_seconds, baseline_value,
     peak_anomaly_value, anomaly_ratio
 ) VALUES (
-    %(job_id)s, %(node_hostname)s, %(metric_name)s, %(signal_detected)s,
+    %(job_id)s, %(node_hostname)s, %(metric_name)s, %(gpu_index)s, %(signal_detected)s,
     %(signal_onset_time)s, %(lead_time_seconds)s, %(baseline_value)s,
     %(peak_anomaly_value)s, %(anomaly_ratio)s
 )
 ON CONFLICT (job_id, node_hostname, metric_name) DO UPDATE SET
+    gpu_index          = EXCLUDED.gpu_index,
     signal_detected    = EXCLUDED.signal_detected,
     signal_onset_time  = EXCLUDED.signal_onset_time,
     lead_time_seconds  = EXCLUDED.lead_time_seconds,

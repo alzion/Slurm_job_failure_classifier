@@ -15,7 +15,7 @@ STEP_S = 60 (1-minute Prometheus step) is used in rate calculations.
 
 import pytest
 
-from classifier.correlation_engine import _first_crossing, STEP_S
+from classifier.correlation_engine import _first_crossing, _extract_gpu_index, STEP_S
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,45 @@ def peak(result):
 
 def ratio(result):
     return result[3]
+
+
+# ---------------------------------------------------------------------------
+# _extract_gpu_index
+# ---------------------------------------------------------------------------
+
+class TestExtractGpuIndex:
+
+    def test_standard_gpu_label(self):
+        assert _extract_gpu_index({'hostname': 'gpu03', 'gpu': '3'}) == 3
+
+    def test_gpu_zero(self):
+        assert _extract_gpu_index({'gpu': '0'}) == 0
+
+    def test_mig_gpu_instance_label(self):
+        assert _extract_gpu_index({'GPU_I_ID': '2'}) == 2
+
+    def test_configured_label_wins_over_default(self):
+        import classifier.correlation_engine as ce
+        original = ce.DCGM_GPU_IDX_LABEL
+        try:
+            ce.DCGM_GPU_IDX_LABEL = 'device'
+            assert _extract_gpu_index({'device': '5', 'gpu': '0'}) == 5
+        finally:
+            ce.DCGM_GPU_IDX_LABEL = original
+
+    def test_no_gpu_label_returns_none(self):
+        assert _extract_gpu_index({'hostname': 'gpu03', '__name__': 'DCGM_FI_DEV_GPU_TEMP'}) is None
+
+    def test_empty_labels_returns_none(self):
+        assert _extract_gpu_index({}) is None
+
+    def test_non_integer_label_skipped(self):
+        assert _extract_gpu_index({'gpu': 'N/A'}) is None
+
+    def test_integer_returned_not_string(self):
+        result = _extract_gpu_index({'gpu': '7'})
+        assert isinstance(result, int)
+        assert result == 7
 
 
 # ---------------------------------------------------------------------------

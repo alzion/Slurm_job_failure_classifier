@@ -23,6 +23,7 @@ CREATE TABLE correlation_results (
   job_id              VARCHAR(20) REFERENCES job_events(job_id),
   node_hostname       VARCHAR(20),
   metric_name         VARCHAR(80),
+  gpu_index           INTEGER,
   signal_detected     BOOLEAN,
   signal_onset_time   TIMESTAMPTZ,
   lead_time_seconds   INTEGER,

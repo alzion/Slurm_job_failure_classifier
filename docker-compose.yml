@@ -141,6 +141,7 @@ services:
       POSTGRES_PORT:        5432
       PROMETHEUS_URL:       http://prometheus:9090
       DCGM_HOSTNAME_LABEL:  ${DCGM_HOSTNAME_LABEL:-hostname}
+      DCGM_GPU_INDEX_LABEL: ${DCGM_GPU_INDEX_LABEL:-gpu}
     depends_on:
       - postgres
       - prometheus

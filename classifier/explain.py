@@ -61,7 +61,7 @@ def _fetch_stored(job_id: str) -> Optional[dict]:
             job_row = cur.fetchone()
 
             cur.execute(
-                '''SELECT metric_name, node_hostname, signal_detected,
+                '''SELECT metric_name, node_hostname, gpu_index, signal_detected,
                           lead_time_seconds, peak_anomaly_value
                    FROM correlation_results
                    WHERE job_id = %s AND signal_detected = TRUE
@@ -201,9 +201,10 @@ def format_explain(result: dict) -> str:
     if signals:
         lines.append(f"  Pre-failure signals ({len(signals)} detected):")
         for s in signals:
-            lead = f"{s['lead_time_seconds'] // 60}min" if s['lead_time_seconds'] else '?'
+            lead     = f"{s['lead_time_seconds'] // 60}min" if s['lead_time_seconds'] else '?'
+            gpu_str  = f"/GPU{s['gpu_index']}" if s.get('gpu_index') is not None else ''
             lines.append(
-                f"    {s['metric_name']:45s}  node={s['node_hostname']}"
+                f"    {s['metric_name']:45s}  node={s['node_hostname']}{gpu_str}"
                 f"  lead={lead}  peak={s['peak_anomaly_value']:.1f}"
             )
     else:
