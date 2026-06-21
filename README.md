@@ -191,6 +191,7 @@ All documents live in `docs/`:
 
 | Document | Audience | Purpose |
 |---|---|---|
+| `real_cluster_deployment.md` | Infra engineers | Step-by-step guide to connecting the classifier to a real Slurm cluster |
 | `PRD.md` | Stakeholders | Business case, goals, non-goals, success metrics |
 | `roadmap.md` | Program team | 3-phase, 24-week milestones with exit criteria |
 | `stakeholder_map.md` | Program team | RACI matrix, concerns, mitigations, comms plan |
