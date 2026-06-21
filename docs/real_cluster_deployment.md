@@ -104,8 +104,10 @@ Add a cron job on the monitoring host to pull logs every 5 minutes:
 
 ```bash
 # /etc/cron.d/slurm-log-sync
-*/5 * * * * root rsync -az --no-owner slurm-controller.internal:/var/log/slurm/ /opt/slurm-logs/
+*/5 * * * * root rsync -az --inplace --no-owner slurm-controller.internal:/var/log/slurm/ /opt/slurm-logs/
 ```
+
+> **`--inplace` is required.** Without it, rsync writes to a temp file then renames, giving the destination file a new inode on every sync. The classifier detects inode changes as log rotation and re-reads the entire file from byte 0 on every cycle, defeating the incremental reading optimisation.
 
 For `slurmd.log`, the simplest approach is rsyslog forwarding on each compute node. Add to `/etc/rsyslog.d/slurm-forward.conf` on each node:
 
@@ -143,29 +145,42 @@ cat /tmp/test_sacct.json | python3 -c "import json,sys; d=json.load(sys.stdin); 
 
 ### Option B — Epilog hook (hook mode, lower latency)
 
-Once poll mode is validated and you want sub-minute classification latency:
+Once poll mode is validated and you want sub-minute classification latency.
 
-1. Copy the epilog script to the Slurm controller:
+The epilog script calls the override-api on the monitoring host over HTTP — it does **not** require Docker on the Slurm controller.
+
+1. Copy `adapt_sacct.py` and `epilog_hook.sh` to the Slurm controller:
 ```bash
-cp epilog_hook.sh /etc/slurm/epilog.d/01_classify.sh
+scp adapt_sacct.py epilog_hook.sh slurm-controller.internal:/opt/classifier/
+```
+
+2. Copy the epilog script into place:
+```bash
+cp /opt/classifier/epilog_hook.sh /etc/slurm/epilog.d/01_classify.sh
 chmod +x /etc/slurm/epilog.d/01_classify.sh
 ```
 
-2. Edit the script to set paths for your environment:
+3. Edit the top of the script to match your environment:
 ```bash
-SACCT_PATH=/opt/slurm-logs/sacct_data.json
-# CLASSIFIER_EXEC points at the running classifier container
-CLASSIFIER_EXEC="docker exec classifier"
+CLASSIFIER_URL="http://monitoring-host.internal:8002"
+SACCT_PATH="/shared/logs/sacct_data.json"   # must be in LOG_MOUNT
 ```
 
-3. Tell Slurm to run the epilog. In `slurm.conf`:
+4. Tell Slurm to run the epilog. In `slurm.conf`:
 ```
 Epilog=/etc/slurm/epilog.d/01_classify.sh
 ```
 
-4. Reload Slurm: `scontrol reconfig`
+5. Reload Slurm: `scontrol reconfig`
 
-5. Update `.env` on the monitoring host: `CLASSIFIER_MODE=hook`
+6. Update `.env` on the monitoring host: `CLASSIFIER_MODE=hook`, then `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d classifier`
+
+7. Test with a short job:
+```bash
+sbatch --wrap="sleep 1"
+# then check within seconds:
+curl http://monitoring-host.internal:8002/api/v1/explain/<job_id>
+```
 
 ---
 

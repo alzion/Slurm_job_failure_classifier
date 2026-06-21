@@ -13,6 +13,7 @@ Run:
   (or via Docker: command: python -m classifier.override_api)
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -25,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from classifier.explain import explain_job
+from classifier.classifier import run_once
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
@@ -207,6 +209,27 @@ def explain_endpoint(job_id: str):
     if 'error' in result:
         raise HTTPException(404, result['error'])
     return result
+
+
+@app.post('/api/v1/classify/{job_id}')
+async def trigger_classify(job_id: str):
+    """
+    Trigger immediate classification for a specific job.
+    Called by the Slurm epilog hook instead of docker exec, so the
+    Slurm controller does not need Docker installed.
+
+    Reads logs and sacct data from LOG_DIR / SACCT_PATH (the same
+    volume the classifier service uses), classifies the job, and
+    writes the result to job_events.
+    """
+    try:
+        # run_once is CPU-bound and connects to the DB; run in a thread
+        # so the event loop stays responsive during the DB/IO work.
+        result = await asyncio.to_thread(run_once, job_id)
+        return {'job_id': job_id, 'status': 'classified', **result}
+    except Exception as exc:
+        log.error(f'classify trigger failed for job {job_id}: {exc}')
+        raise HTTPException(500, str(exc))
 
 
 @app.get('/health')

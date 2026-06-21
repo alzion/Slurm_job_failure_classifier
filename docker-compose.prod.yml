@@ -27,10 +27,11 @@ services:
     volumes:
       - ${LOG_MOUNT:-/var/log/slurm}:/logs:ro
     environment:
-      CLASSIFIER_MODE:  hook
+      CLASSIFIER_MODE:  ${CLASSIFIER_MODE:-hook}     # poll or hook — set in .env
       SACCT_FORMAT:     real
       SACCT_PATH:       /logs/sacct_data.json
       LOG_DIR:          /logs
+      PROMETHEUS_URL:   ${REAL_PROMETHEUS_URL:-http://prometheus:9090}
 
   node-health-rollup:
     environment:
@@ -41,10 +42,15 @@ services:
       PROMETHEUS_URL:      ${REAL_PROMETHEUS_URL:-http://prometheus:9090}
       DCGM_HOSTNAME_LABEL: ${DCGM_HOSTNAME_LABEL:-hostname}
 
+  grafana:
+    environment:
+      GF_PROMETHEUS_URL: ${REAL_PROMETHEUS_URL:-http://prometheus:9090}
+
   override-api:
     volumes:
       - ${LOG_MOUNT:-/var/log/slurm}:/logs:ro
     environment:
-      SACCT_FORMAT: real
-      SACCT_PATH:   /logs/sacct_data.json
-      LOG_DIR:      /logs
+      SACCT_FORMAT:    real
+      SACCT_PATH:      /logs/sacct_data.json
+      LOG_DIR:         /logs
+      PROMETHEUS_URL:  ${REAL_PROMETHEUS_URL:-http://prometheus:9090}

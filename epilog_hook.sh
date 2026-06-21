@@ -5,25 +5,39 @@
 #   cp epilog_hook.sh /etc/slurm/epilog.d/01_classify.sh
 #   chmod +x /etc/slurm/epilog.d/01_classify.sh
 #
-# Slurm calls this script after every job completes, with the job's
-# environment variables set (SLURM_JOB_ID, SLURM_JOB_NODELIST, etc.).
+# Then reload Slurm: scontrol reconfig
 #
-# What it does:
-#   1. Fetches sacct --json for this job and writes to SACCT_PATH.
-#   2. Invokes the classifier in hook mode for this specific job.
+# Configuration (set as environment variables or edit defaults below):
+#   CLASSIFIER_URL  — base URL of the override-api on the monitoring host
+#   SACCT_PATH      — where to write the sacct JSON (must match LOG_MOUNT)
 #
-# The classifier container must be running; this script calls it via
-# `docker exec` by default. Set CLASSIFIER_EXEC to override.
+# This script calls the monitoring host's override-api over HTTP — it does
+# NOT require Docker on the Slurm controller.
 
-set -euo pipefail
+CLASSIFIER_URL="${CLASSIFIER_URL:-http://monitoring-host:8002}"
+SACCT_PATH="${SACCT_PATH:-/shared/logs/sacct_data.json}"
+ADAPT_SACCT="${ADAPT_SACCT:-/opt/classifier/adapt_sacct.py}"
+LOG_TAG="[gpu-classifier epilog job=${SLURM_JOB_ID}]"
 
-SACCT_PATH="${SACCT_PATH:-/var/log/slurm/sacct_data.json}"
-CLASSIFIER_EXEC="${CLASSIFIER_EXEC:-docker exec classifier}"
+# Step 1: fetch sacct record for this job.
+# Retry once with a brief delay — the accounting DB may not have committed
+# the job record in the instant the epilog fires.
+if ! python3 "$ADAPT_SACCT" --job-id "$SLURM_JOB_ID" --output "$SACCT_PATH" 2>/dev/null; then
+    sleep 3
+    if ! python3 "$ADAPT_SACCT" --job-id "$SLURM_JOB_ID" --output "$SACCT_PATH"; then
+        echo "$LOG_TAG sacct fetch failed — classification skipped" >&2
+        exit 0   # never abort the epilog on classifier failure
+    fi
+fi
 
-# Step 1: fetch sacct record for this job
-python /opt/classifier/adapt_sacct.py \
-    --job-id "$SLURM_JOB_ID" \
-    --output "$SACCT_PATH"
+# Step 2: trigger classification via HTTP.
+# curl -sf: -s suppresses progress, -f returns non-zero on HTTP errors.
+# The || true ensures epilog continues even if the monitoring host is unreachable.
+if ! curl -sf -m 30 -X POST \
+        "$CLASSIFIER_URL/api/v1/classify/$SLURM_JOB_ID" \
+        -H "Content-Type: application/json" \
+        -o /dev/null; then
+    echo "$LOG_TAG classify request failed (monitoring host unreachable?)" >&2
+fi
 
-# Step 2: classify this job
-$CLASSIFIER_EXEC python -m classifier.classifier --job-id "$SLURM_JOB_ID"
+exit 0

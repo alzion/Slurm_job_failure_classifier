@@ -22,7 +22,7 @@ datasources:
   - name: Prometheus
     uid: prometheus-fleet
     type: prometheus
-    url: http://prometheus:9090
+    url: ${GF_PROMETHEUS_URL}
     isDefault: true
     jsonData:
       httpMethod: POST
